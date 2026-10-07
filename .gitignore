@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+
+# Environment variables
+.env
+
+# Data
+data/videos/
+data/images/
+
+# Model files
+models/*.pt
+models/*.onnx
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
