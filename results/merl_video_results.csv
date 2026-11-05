@@ -1,0 +1,6 @@
+﻿video,width_px,height_px,fps,frames_processed,duration_seconds,unique_track_ids_observed,tracks_at_least_1_second,average_tracked_person_boxes_per_frame,peak_tracked_person_boxes_in_frame,average_observed_track_duration_seconds,maximum_observed_track_duration_seconds,minimum_observed_track_duration_seconds,confidence_threshold,minimum_track_duration_filter_seconds
+1_1_crop.mp4,920,680,30.0,3920,130.667,13,9,0.663,1,11.259,27.2,1.6,0.4,1.0
+2_1_crop.mp4,920,680,30.0,3804,126.8,9,8,0.696,1,13.317,27.7,1.033,0.4,1.0
+3_1_crop.mp4,920,680,30.0,3694,123.133,22,13,0.457,2,5.126,27.2,1.133,0.4,1.0
+4_1_crop.mp4,920,680,30.0,3969,132.3,19,15,0.438,2,5.407,11.867,1.0,0.4,1.0
+5_1_crop.mp4,920,680,30.0,3722,124.067,8,5,0.673,2,19.347,24.933,8.333,0.4,1.0

@@ -1,0 +1,6 @@
+video,saved_image,frame_number,timestamp_seconds,tracked_boxes,status
+1_1_crop.mp4,1_1_crop_sample.png,809,26.967,1,Saved
+2_1_crop.mp4,2_1_crop_sample.png,760,25.333,1,Saved
+3_1_crop.mp4,3_1_crop_sample.png,2679,89.3,2,Saved
+4_1_crop.mp4,4_1_crop_sample.png,823,27.433,2,Saved
+5_1_crop.mp4,5_1_crop_sample.png,1582,52.733,2,Saved
