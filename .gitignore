@@ -21,6 +21,8 @@ venv/
 data/videos/
 data/images/
 data/uploads/
+data/external/
+test-results/
 
 # Model files
 models/*.pt
