@@ -59,25 +59,27 @@ export default function VideoAnalyticsPage() {
   useEffect(() => {
     const controller = new AbortController();
 
-    queueMicrotask(() => {
-      setIsLoadingJobs(true);
+    setIsLoadingJobs(true);
 
-      listVideoJobs(controller.signal)
-        .then((data) => {
-          if (Array.isArray(data)) {
-            setJobs(data);
-            if (data.length > 0 && !activeJobId) {
-              setActiveJobId(data[0].id);
-            }
+    listVideoJobs(controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted && Array.isArray(data)) {
+          setJobs(data);
+          if (data.length > 0 && !activeJobId) {
+            setActiveJobId(data[0].id);
           }
-        })
-        .catch(() => {
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
           setJobs([]);
-        })
-        .finally(() => {
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
           setIsLoadingJobs(false);
-        });
-    });
+        }
+      });
 
     return () => {
       controller.abort();

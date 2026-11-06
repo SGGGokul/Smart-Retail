@@ -41,26 +41,29 @@ export default function AlertsPage() {
         signal
       );
 
+      if (signal?.aborted) return;
+
       if (res && Array.isArray(res.alerts)) {
         setAlertsList(res.alerts);
       } else {
         setAlertsList([]);
       }
     } catch (err) {
+      if (signal?.aborted) return;
       setError(
         `Unable to fetch alerts from backend: ${(err as Error).message}. Check FastAPI service at http://localhost:8000.`
       );
       setAlertsList([]);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, [severityFilter, ackFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => {
-      fetchAlerts(controller.signal);
-    });
+    fetchAlerts(controller.signal);
 
     return () => {
       controller.abort();

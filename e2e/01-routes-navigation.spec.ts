@@ -25,7 +25,7 @@ test.describe("Phase 2 — Route Health and Navigation E2E", () => {
       expect(response?.status()).toBe(200);
 
       // Verify no fatal Next.js error overlays
-      const nextError = page.locator("nextjs-portal, [data-nextjs-dialog-header]");
+      const nextError = page.locator("[data-nextjs-dialog-header], [data-nextjs-toast-errors]");
       await expect(nextError).toHaveCount(0);
 
       // Verify heading or page content appears

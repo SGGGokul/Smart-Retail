@@ -49,12 +49,16 @@ export default function SettingsPage() {
     setHealthError(null);
     try {
       const health = await checkHealth(signal);
+      if (signal?.aborted) return;
       setHealthData(health);
     } catch (err) {
+      if (signal?.aborted) return;
       setHealthData(null);
       setHealthError((err as Error).message);
     } finally {
-      setIsTesting(false);
+      if (!signal?.aborted) {
+        setIsTesting(false);
+      }
     }
   }, []);
 
@@ -63,18 +67,14 @@ export default function SettingsPage() {
       const saved = localStorage.getItem("retailiq_frontend_settings");
       if (saved) {
         const parsed = JSON.parse(saved);
-        queueMicrotask(() => {
-          setSettings(parsed);
-        });
+        setSettings(parsed);
       }
     } catch {
       // LocalStorage unavailable
     }
 
     const controller = new AbortController();
-    queueMicrotask(() => {
-      probeBackendHealth(controller.signal);
-    });
+    probeBackendHealth(controller.signal);
 
     return () => {
       controller.abort();

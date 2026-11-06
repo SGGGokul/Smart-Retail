@@ -49,6 +49,8 @@ export default function OverviewPage() {
         getDashboardShelves(signal),
       ]);
 
+      if (signal?.aborted) return;
+
       let errorCount = 0;
       let lastErrorMessage = "";
 
@@ -88,17 +90,18 @@ export default function OverviewPage() {
         setError(`Partial data loaded: some dashboard endpoints were unavailable (${lastErrorMessage}).`);
       }
     } catch (err) {
+      if (signal?.aborted) return;
       setError(`Backend error: ${(err as Error).message}`);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => {
-      loadDashboardData(period, controller.signal);
-    });
+    loadDashboardData(period, controller.signal);
 
     return () => {
       controller.abort();

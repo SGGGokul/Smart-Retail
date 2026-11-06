@@ -48,8 +48,12 @@ export default function AiAssistantPage() {
   useEffect(() => {
     const controller = new AbortController();
     getDashboardSummary(controller.signal)
-      .then((data) => setBackendSummary(data))
-      .catch(() => setBackendSummary(null));
+      .then((data) => {
+        if (!controller.signal.aborted) setBackendSummary(data);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setBackendSummary(null);
+      });
 
     return () => {
       controller.abort();

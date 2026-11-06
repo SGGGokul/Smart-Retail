@@ -57,6 +57,8 @@ export default function CustomerAnalyticsPage() {
         getDashboardSummary(signal),
       ]);
 
+      if (signal?.aborted) return;
+
       let failures = 0;
       let lastErrMsg = "";
 
@@ -96,17 +98,18 @@ export default function CustomerAnalyticsPage() {
         setError(`Partial analytics loaded: some endpoints were unavailable (${lastErrMsg}).`);
       }
     } catch (err) {
+      if (signal?.aborted) return;
       setError(`Backend error: ${(err as Error).message}`);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => {
-      loadData(timeRange, controller.signal);
-    });
+    loadData(timeRange, controller.signal);
 
     return () => {
       controller.abort();

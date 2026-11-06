@@ -39,18 +39,26 @@ export default function Topnav({ onMenuClick }: TopnavProps) {
 
     checkHealth(controller.signal)
       .then((health) => {
-        setIsBackendOnline(health.status === "ok");
+        if (!controller.signal.aborted) {
+          setIsBackendOnline(health.status === "ok");
+        }
       })
       .catch(() => {
-        setIsBackendOnline(false);
+        if (!controller.signal.aborted) {
+          setIsBackendOnline(false);
+        }
       });
 
     listAlerts({ acknowledged: false }, controller.signal)
       .then((data) => {
-        setUnackAlertsCount(data.unacknowledgedCount ?? (data.alerts ? data.alerts.length : 0));
+        if (!controller.signal.aborted) {
+          setUnackAlertsCount(data.unacknowledgedCount ?? (data.alerts ? data.alerts.length : 0));
+        }
       })
       .catch(() => {
-        setUnackAlertsCount(0);
+        if (!controller.signal.aborted) {
+          setUnackAlertsCount(0);
+        }
       });
 
     return () => {

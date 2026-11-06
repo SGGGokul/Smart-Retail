@@ -28,22 +28,24 @@ export default function ReportsPage() {
 
     try {
       const data = await getReportBundle(range, signal);
+      if (signal?.aborted) return;
       setBundle(data);
     } catch (err) {
+      if (signal?.aborted) return;
       setError(
         `Failed to gather report telemetry: ${(err as Error).message}. Verify FastAPI backend connectivity.`
       );
       setBundle(null);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => {
-      fetchBundle(selectedRange, controller.signal);
-    });
+    fetchBundle(selectedRange, controller.signal);
 
     return () => {
       controller.abort();

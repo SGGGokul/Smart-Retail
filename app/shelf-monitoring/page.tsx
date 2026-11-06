@@ -44,26 +44,29 @@ export default function ShelfMonitoringPage() {
       const apiFilter = filter === "all" || filter === "ok" ? undefined : filter;
       const res = await listShelves(apiFilter, signal);
 
+      if (signal?.aborted) return;
+
       if (res && Array.isArray(res.shelves)) {
         setShelvesList(res.shelves);
       } else {
         setShelvesList([]);
       }
     } catch (err) {
+      if (signal?.aborted) return;
       setError(
         `Failed to retrieve shelf inventory: ${(err as Error).message}. Check backend service at http://localhost:8000.`
       );
       setShelvesList([]);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => {
-      fetchShelves(statusFilter, controller.signal);
-    });
+    fetchShelves(statusFilter, controller.signal);
 
     return () => {
       controller.abort();
