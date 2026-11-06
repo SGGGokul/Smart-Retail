@@ -2,16 +2,25 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.log
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Virtual environment
+.venv/
 venv/
 
 # Environment variables
 .env
+.env.local
 
-# Data
+# Data & Uploads
 data/videos/
 data/images/
+data/uploads/
 
 # Model files
 models/*.pt
