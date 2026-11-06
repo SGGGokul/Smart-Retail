@@ -12,6 +12,9 @@
 
 # testing
 /coverage
+/test-results/
+/playwright-report/
+/reports/
 
 # next.js
 /.next/
@@ -23,6 +26,8 @@
 # misc
 .DS_Store
 *.pem
+*.log
+ss.py
 
 # debug
 npm-debug.log*
@@ -39,3 +44,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agents & local tool caches
+.agents/
+skills-lock.json
+
+# separate repositories
+Backend/
