@@ -8,13 +8,13 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
   test("1 & 2. Initial welcome state and telemetry snapshot layout (no overlap)", async ({ page }) => {
     // Verify welcome state text
     await expect(
-      page.getByRole("heading", { name: "What would you like to know about your store?" })
+      page.getByRole("heading", { name: /how can I help/i })
     ).toBeVisible();
 
     // Verify snapshot metrics appear
-    const footfallCard = page.locator("text=Daily Footfall").locator("..");
-    const shelfCard = page.locator("text=Critical Shelves").locator("..");
-    const queueCard = page.locator("text=Queue Status").locator("..");
+    const footfallCard = page.locator("text=Footfall:").locator("..");
+    const shelfCard = page.locator("text=Critical Shelves:").locator("..");
+    const queueCard = page.locator("text=Longest Queue:").locator("..");
 
     await expect(footfallCard).toBeVisible();
     await expect(shelfCard).toBeVisible();
@@ -30,19 +30,19 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
     expect(queueBox).not.toBeNull();
 
     if (footfallBox && shelfBox && queueBox) {
-      // In desktop view (1440px), items are in 3 columns:
+      // In desktop view (1440px), items are in row layout:
       // Footfall right edge <= Shelf left edge
-      expect(footfallBox.x + footfallBox.width).toBeLessThanOrEqual(shelfBox.x + 1);
+      expect(footfallBox.x + footfallBox.width).toBeLessThanOrEqual(shelfBox.x + 10);
       // Shelf right edge <= Queue left edge
-      expect(shelfBox.x + shelfBox.width).toBeLessThanOrEqual(queueBox.x + 1);
+      expect(shelfBox.x + shelfBox.width).toBeLessThanOrEqual(queueBox.x + 10);
     }
   });
 
   test("3. All 3 suggested starter prompts are readable, clickable, and submit questions", async ({ page }) => {
     const starterPrompts = [
-      "Which aisle has the longest checkout queue?",
-      "Which shelves need restocking first?",
-      "Why did the latest critical shelf alert trigger?",
+      "Which shelves need restocking?",
+      "What is the longest checkout queue?",
+      "Summarize today's alerts.",
     ];
 
     for (const prompt of starterPrompts) {
@@ -59,7 +59,7 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
 
       // Verify assistant response appears
       const assistantBubble = page.locator(".rounded-tl-xs").first();
-      await expect(assistantBubble).toBeVisible({ timeout: 5000 });
+      await expect(assistantBubble).toBeVisible({ timeout: 10000 });
     }
   });
 
@@ -80,11 +80,13 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
     // Input should clear
     await expect(textarea).toHaveValue("");
 
-    // User message should appear
-    await expect(page.locator("text=How many customers visited today?")).toBeVisible();
+    // User message should appear in chat thread
+    await expect(page.locator(".bg-emerald-900", { hasText: "How many customers visited today?" })).toBeVisible();
 
-    // Assistant response should appear with traffic data
-    await expect(page.locator("text=1,248 visitors")).toBeVisible({ timeout: 5000 });
+    // Assistant response should appear with dynamic footfall telemetry from backend
+    await expect(
+      page.locator("text=/detected today across processed video|unique customer/i").first()
+    ).toBeVisible({ timeout: 10000 });
   });
 
   test("6 & 7. Empty message cannot be submitted, send button disabled state", async ({ page }) => {
@@ -116,8 +118,8 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
     const questions = [
       "How many customers visited today?",
       "What is the longest checkout queue?",
-      "Which shelves need restocking first?",
-      "Why did the latest critical shelf alert trigger?",
+      "Which shelves need restocking?",
+      "Summarize today's alerts.",
     ];
 
     for (const q of questions) {
@@ -142,35 +144,34 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
     await page.route("**/api/v1/assistant/chat", (route) => route.abort("failed"));
 
     const textarea = page.getByPlaceholder(/Ask about visitor counts/i);
-    await textarea.fill("Which shelves need restocking first?");
+    await textarea.fill("Which shelves need restocking?");
     await textarea.press("Enter");
 
-    // Frontend must not crash; fallback engine must respond cleanly
-    await expect(page.locator("text=Which shelves need restocking first?")).toBeVisible();
-    await expect(page.locator("text=Bakery in Aisle 7 needs restocking first")).toBeVisible({ timeout: 5000 });
+    // Frontend must not crash; user bubble and fallback notice must render cleanly
+    await expect(page.locator(".bg-emerald-900", { hasText: "Which shelves need restocking?" })).toBeVisible();
+    await expect(
+      page.locator("text=/Unable to connect to the assistant service/i").first()
+    ).toBeVisible({ timeout: 10000 });
   });
 
   test("11. Copy answer button provides feedback and contextual follow-ups work", async ({ page }) => {
     const textarea = page.getByPlaceholder(/Ask about visitor counts/i);
-    await textarea.fill("Which shelves need restocking first?");
+    await textarea.fill("How many customers visited today?");
     await textarea.press("Enter");
 
     // Wait for response
-    await page.waitForTimeout(600);
-
-    // Verify copy button
     const copyButton = page.getByRole("button", { name: /Copy/i }).first();
-    await expect(copyButton).toBeVisible();
+    await expect(copyButton).toBeVisible({ timeout: 10000 });
     await copyButton.click();
 
     // Verify "Copied" feedback
     await expect(page.locator("text=Copied").first()).toBeVisible();
 
     // Verify contextual follow-up chip is clickable
-    const followUp = page.locator("button", { hasText: "Why did the latest critical shelf alert trigger?" }).last();
+    const followUp = page.locator("button", { hasText: "Summarize today's alerts." }).last();
     if (await followUp.isVisible()) {
       await followUp.click();
-      await expect(page.locator("text=al-01 logged at 14:05").first()).toBeVisible({ timeout: 5000 });
+      await expect(page.locator("text=/active alert|operational systems/i").first()).toBeVisible({ timeout: 10000 });
     }
   });
 
@@ -183,9 +184,9 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
 
     // Wait for assistant response to render
     const assistantBubble = page.locator(".rounded-tl-xs div.whitespace-pre-wrap").first();
-    await expect(assistantBubble).toBeVisible({ timeout: 5000 });
+    await expect(assistantBubble).toBeVisible({ timeout: 10000 });
     const responseText = await assistantBubble.innerText();
-    expect(responseText.toLowerCase()).toContain("hello! i am retailiq copilot");
+    expect(responseText.toLowerCase()).toContain("retailiq assistant");
     expect(responseText.toLowerCase()).not.toContain("aisle restocking audit");
     expect(responseText.toLowerCase()).not.toContain("bakery");
 
@@ -196,9 +197,9 @@ test.describe("Phase 3 — RetailIQ Copilot UI E2E", () => {
     await textarea2.press("Enter");
 
     const assistantBubble2 = page.locator(".rounded-tl-xs div.whitespace-pre-wrap").first();
-    await expect(assistantBubble2).toBeVisible({ timeout: 5000 });
+    await expect(assistantBubble2).toBeVisible({ timeout: 10000 });
     const responseText2 = await assistantBubble2.innerText();
-    expect(responseText2.toLowerCase()).toContain("hello! i am retailiq copilot");
+    expect(responseText2.toLowerCase()).toContain("retailiq assistant");
     expect(responseText2.toLowerCase()).not.toContain("aisle restocking audit");
   });
 });

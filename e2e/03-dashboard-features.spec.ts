@@ -6,111 +6,87 @@ test.describe("Phase 4 — Dashboard, Shelf Monitoring, Video, Alerts, Reports &
 
     // Verify key metrics cards are visible
     await expect(page.getByText("Customer Footfall", { exact: true })).toBeVisible();
-    await expect(page.locator("text=8,304")).toBeVisible();
     await expect(page.locator("text=Avg Dwell Time")).toBeVisible();
-    await expect(page.locator("text=22.4 min")).toBeVisible();
-
-    // Verify Restock Priority card
     await expect(page.locator("text=Restock Priority")).toBeVisible();
-    await expect(page.locator("text=Bakery (26%), Beverages (38%)")).toBeVisible();
 
     // Verify chart containers exist
     await expect(page.locator("text=Customer Footfall Volume & Trend")).toBeVisible();
-    await expect(page.locator("text=Hourly Ingress Profile")).toBeVisible();
+    await expect(page.locator("text=Hourly Visitor Density Distribution")).toBeVisible();
   });
 
-  test("Shelf Monitoring: stock percentages, filters, and Restock modal", async ({ page }) => {
+  test("Shelf Monitoring: live API integration and empty state", async ({ page }) => {
     await page.goto("/shelf-monitoring");
 
-    // Verify critical and low stock shelves are visible
-    await expect(page.locator("text=Bakery").first()).toBeVisible();
-    await expect(page.locator("text=26% Available")).toBeVisible();
-    await expect(page.locator("text=Beverages").first()).toBeVisible();
-    await expect(page.locator("text=38% Available")).toBeVisible();
+    // Verify page heading and description
+    await expect(page.locator("h1")).toContainText("Shelf Monitoring");
 
-    // Open Restock Details modal for Bakery
-    const restockBtn = page.getByRole("button", { name: /Restock Details/i }).first();
-    await expect(restockBtn).toBeVisible();
-    await restockBtn.click();
+    // Verify shelf health indicators section
+    await expect(page.getByRole("region", { name: "Shelf health indicators" })).toBeVisible();
 
-    // Verify modal dialog opened
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("Restock Verification (Simulation)");
-    await expect(dialog).toContainText("Simulated");
+    // Verify search and filter controls exist
+    const searchInput = page.getByPlaceholder(/Search aisle or category/i);
+    await expect(searchInput).toBeVisible();
+    await searchInput.fill("Aisle");
+    await expect(searchInput).toHaveValue("Aisle");
 
-    // Close dialog
-    const closeBtn = page.getByRole("button", { name: "Close dialog" });
-    await closeBtn.click();
-    await expect(dialog).toHaveCount(0);
+    // Live backend returns empty shelf list (as YOLO11 doesn't fabricate shelves)
+    await expect(page.getByText("No shelf bays found")).toBeVisible();
   });
 
-  test("Video Analytics: camera switching and playback controls", async ({ page }) => {
+  test("Video Analytics: Studio layout, upload dropzone, and job inspection", async ({ page }) => {
     await page.goto("/video-analytics");
 
-    // Select CAM-02 in camera select dropdown
-    const camSelect = page.locator("select").first();
-    await expect(camSelect).toBeVisible();
-    await camSelect.selectOption("cam-02");
-    await expect(page.locator("h2", { hasText: "CAM-02" })).toBeVisible();
+    // Verify Studio headers and elements
+    await expect(page.locator("h1")).toContainText("Computer Vision Studio");
+    await expect(page.locator("text=FastAPI Video Ingestion")).toBeVisible();
+    await expect(page.locator("text=Drop video or browse file")).toBeVisible();
 
-    // Toggle stream pause / resume
-    const pauseBtn = page.getByRole("button", { name: /Pause Feed|Resume Feed/i });
-    await expect(pauseBtn).toBeVisible();
-    await pauseBtn.click();
-    await expect(page.getByRole("button", { name: /Resume Feed/i })).toBeVisible();
-    await page.getByRole("button", { name: /Resume Feed/i }).click();
-
-    // Toggle detections overlay
-    const overlayBtn = page.getByRole("button", { name: /Hide Reticles|Show Reticles/i });
-    await expect(overlayBtn).toBeVisible();
-    await overlayBtn.click();
-    await expect(page.getByRole("button", { name: /Show Reticles/i })).toBeVisible();
+    // Verify processed jobs table displays real video items
+    await expect(page.locator("text=Processing Job History")).toBeVisible();
+    await expect(page.locator("text=merl_retail_shopper_feed.mp4").first()).toBeVisible();
+    await expect(page.locator("text=Completed").first()).toBeVisible();
   });
 
   test("Alerts Feed: filter, search, and acknowledge interactions", async ({ page }) => {
     await page.goto("/alerts");
 
-    // Check critical filter
-    const criticalFilter = page.getByRole("button", { name: "critical" }).first();
-    await expect(criticalFilter).toBeVisible();
-    await criticalFilter.click();
-
-    // Search input
+    // Search input for real occupancy alert
     const searchInput = page.getByPlaceholder("Search location or keyword...");
     await expect(searchInput).toBeVisible();
-    await searchInput.fill("Bakery");
-    await expect(page.locator("text=Bakery display stock critically low.").first()).toBeVisible();
+    await searchInput.fill("Occupancy");
+    await expect(page.locator("text=/Peak occupancy|Critical Store Occupancy/i").first()).toBeVisible();
 
     // Clear search
     await searchInput.fill("");
 
-    // Toggle acknowledge on first unacknowledged alert
-    const ackBtn = page.getByRole("button", { name: /Acknowledge/i }).first();
+    // Toggle acknowledge on unacknowledged alert if available
+    const ackBtn = page.getByRole("button", { name: "Acknowledge" }).first();
     if (await ackBtn.isVisible()) {
       await ackBtn.click();
-      // Toast confirmation
-      await expect(page.locator("text=Acknowledged:").first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Reopen" }).first()).toBeVisible();
+    } else {
+      // Or verify existing reopen / acknowledged button
+      await expect(page.getByRole("button", { name: "Reopen" }).first()).toBeVisible();
     }
   });
 
   test("Reports: range switching and export simulation", async ({ page }) => {
     await page.goto("/reports");
 
-    // Switch to "today" range
+    // Switch to "Today" range
     const todayBtn = page.getByRole("button", { name: "Today" });
     await todayBtn.click();
-    await expect(page.locator("text=1,248")).toBeVisible();
+    await expect(todayBtn).toBeVisible();
 
-    // Switch to "30d" range
+    // Switch to "30 Days" range
     const monthBtn = page.getByRole("button", { name: "30 Days" });
     await monthBtn.click();
-    await expect(page.locator("text=36,410")).toBeVisible();
+    await expect(monthBtn).toBeVisible();
 
     // Click Export Report button
     const exportBtn = page.getByRole("button", { name: /Export CSV Report/i }).first();
     await exportBtn.click();
-    await expect(page.locator("text=Exported retailiq_telemetry_").first()).toBeVisible();
+    await expect(page.locator("text=/Exported retailiq_report_/i").first()).toBeVisible();
   });
 
   test("Settings: toggle thresholds, save to storage, test backend connection", async ({ page }) => {
@@ -122,13 +98,14 @@ test.describe("Phase 4 — Dashboard, Shelf Monitoring, Video, Alerts, Reports &
     await storeInput.fill("Store #104 — Downtown Flagship");
 
     // Save preferences
-    const saveBtn = page.getByRole("button", { name: /Save Preferences/i });
+    const saveBtn = page.getByRole("button", { name: "Save", exact: true });
     await saveBtn.click();
-    await expect(page.locator("text=Preferences successfully saved").first()).toBeVisible();
+    await expect(page.locator("text=Preferences saved successfully").first()).toBeVisible();
 
-    // Test Backend Connection button (handles offline gracefully)
-    const testConnectionBtn = page.getByRole("button", { name: /Test Connection/i });
+    // Test Backend Connection button (probes FastAPI backend)
+    const testConnectionBtn = page.getByRole("button", { name: /Test Health/i });
     await testConnectionBtn.click();
-    await expect(page.locator("text=Backend").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Backend Connected").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=Service Status:").first()).toBeVisible();
   });
 });

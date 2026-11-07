@@ -12,7 +12,7 @@ test.describe("Stage 3 — Full E2E Integration and Backend Verification", () =>
     // Verify metrics reflect real inference results
     const customerCard = page.getByText("Customer Footfall", { exact: true });
     await expect(customerCard).toBeVisible();
-    await expect(page.locator("text=4 detected from 2 video clip(s)").first()).toBeVisible();
+    await expect(page.locator("text=/\\d+ detected from \\d+ video clip\\(s\\)/").first()).toBeVisible();
   });
 
   test("Video Analytics Studio displays genuine processed inference jobs", async ({ page }) => {

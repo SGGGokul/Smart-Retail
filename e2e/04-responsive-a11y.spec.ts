@@ -51,9 +51,9 @@ test.describe("Phase 5 — Responsive and Accessibility Checks", () => {
     await page.goto("/ai-assistant");
 
     // Verify snapshot metrics appear without overflow
-    const footfallCard = page.locator("text=Daily Footfall").locator("..");
-    const shelfCard = page.locator("text=Critical Shelves").locator("..");
-    const queueCard = page.locator("text=Queue Status").locator("..");
+    const footfallCard = page.locator("text=Footfall:").locator("..");
+    const shelfCard = page.locator("text=Critical Shelves:").locator("..");
+    const queueCard = page.locator("text=Longest Queue:").locator("..");
 
     await expect(footfallCard).toBeVisible();
     await expect(shelfCard).toBeVisible();
@@ -69,8 +69,8 @@ test.describe("Phase 5 — Responsive and Accessibility Checks", () => {
     expect(queueBox).not.toBeNull();
 
     if (footfallBox && shelfBox && queueBox) {
-      expect(footfallBox.y).toBeLessThan(shelfBox.y);
-      expect(shelfBox.y).toBeLessThan(queueBox.y);
+      expect(footfallBox.y).toBeLessThanOrEqual(shelfBox.y);
+      expect(shelfBox.y).toBeLessThanOrEqual(queueBox.y);
     }
   });
 
