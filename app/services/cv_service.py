@@ -92,6 +92,7 @@ class CVService:
         occupancy_values: List[int] = []
         first_seen: Dict[int, int] = {}
         last_seen: Dict[int, int] = {}
+        hit_counts: Dict[int, int] = {}
         previous_positions: Dict[int, Tuple[int, int]] = {}
         counted_entries: Set[int] = set()
         counted_exits: Set[int] = set()
@@ -136,6 +137,7 @@ class CVService:
                         x1, y1, x2, y2 = box
 
                         # Dwell time tracking
+                        hit_counts[track_id] = hit_counts.get(track_id, 0) + 1
                         if track_id not in first_seen:
                             first_seen[track_id] = frame_number
                         last_seen[track_id] = frame_number
@@ -228,11 +230,30 @@ class CVService:
             else 0.0
         )
 
+        tracking_summaries: List[Dict[str, Any]] = []
+        for track_id, f_start in first_seen.items():
+            f_end = last_seen.get(track_id, f_start)
+            span = max(1, f_end - f_start + 1)
+            hits = hit_counts.get(track_id, 1)
+            rate = round(min(1.0, hits / span), 2)
+            dwell = round((f_end - f_start) / fps, 2)
+            tracking_summaries.append({
+                "track_id": track_id,
+                "first_frame": f_start,
+                "last_frame": f_end,
+                "dwell_seconds": dwell,
+                "hit_count": hits,
+                "hit_rate": rate,
+                "crossed_entrance": track_id in counted_entries,
+                "crossed_exit": track_id in counted_exits,
+            })
+
         logger.info(
             f"Finished CV processing on {video_path.name}: "
             f"{frame_number} frames in {elapsed_seconds:.2f}s ({measured_fps} FPS), "
             f"Unique Customers: {len(first_seen)}, Peak Occupancy: {peak_occupancy}, "
-            f"Avg Dwell: {avg_dwell_seconds}s, Entries: {entries}, Exits: {exits}"
+            f"Avg Dwell: {avg_dwell_seconds}s, Entries: {entries}, Exits: {exits}, "
+            f"Track Summaries: {len(tracking_summaries)}"
         )
 
         return {
@@ -255,4 +276,5 @@ class CVService:
             "entries": entries,
             "exits": exits,
             "detections": sample_detections,
+            "tracking_summaries": tracking_summaries,
         }

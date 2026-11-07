@@ -9,11 +9,21 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.db.session import get_session_factory
+from app.models.video import (
+    InferenceResult,
+    TrackingSummary,
+    VideoJob as VideoJobModel,
+)
 from app.schemas.video import (
     JobStatus,
-    VideoJob,
+    VideoBox,
+    VideoDetectionBox,
+    VideoJob as VideoJobSchema,
     VideoResultsResponse,
     VideoUploadResponse,
 )
@@ -29,12 +39,9 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cv-worker")
 
 
 class VideoService:
-    """Manages video job lifecycle, validation, asynchronous execution, and results.
+    """Manages video job lifecycle, validation, asynchronous execution, and results
 
-    STAGE 2 IN-PROCESS WORKER LIMITATIONS:
-      1. State is kept in process memory; restarting the server clears active/queued job history.
-      2. Concurrency is limited by local host CPU/GPU cores (ThreadPoolExecutor max_workers=2).
-      3. For multi-node high-throughput production, this architecture will migrate to Redis + Celery.
+    backed by PostgreSQL persistence.
     """
 
     def __init__(self) -> None:
@@ -42,10 +49,6 @@ class VideoService:
         self.upload_dir = settings.UPLOAD_DIR
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.cv_service = CVService(model_path=settings.MODEL_PATH)
-
-        self._jobs: Dict[str, VideoJob] = {}
-        self._results: Dict[str, VideoResultsResponse] = {}
-        self._raw_cv_results: Dict[str, Dict[str, Any]] = {}
         self._counter = 100
 
     def _generate_job_id(self) -> str:
@@ -55,13 +58,41 @@ class VideoService:
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:
-        # Strip path traversal and keep safe alphanumeric characters
         base = os.path.basename(filename)
         clean = re.sub(r"[^a-zA-Z0-9_.-]", "_", base)
         return clean or "uploaded_video.mp4"
 
-    async def create_job(self, file: UploadFile) -> VideoUploadResponse:
-        """Validate uploaded video, store it safely, and queue background CV inference."""
+    @staticmethod
+    def _orm_to_schema(job_orm: VideoJobModel) -> VideoJobSchema:
+        uploaded_str = (
+            job_orm.uploaded_at.strftime("Today %H:%M")
+            if job_orm.uploaded_at
+            else datetime.datetime.now().strftime("Today %H:%M")
+        )
+        processed_str = (
+            job_orm.processed_at.isoformat()
+            if job_orm.processed_at
+            else None
+        )
+        return VideoJobSchema(
+            id=job_orm.id,
+            file=job_orm.filename,
+            uploaded=uploaded_str,
+            status=job_orm.status,  # type: ignore[arg-type]
+            frames=job_orm.frames,
+            customersDetected=job_orm.customers_detected,
+            durationSeconds=job_orm.duration_seconds,
+            fps=job_orm.fps,
+            processedAt=processed_str,
+            error=job_orm.error_message,
+        )
+
+    async def create_job(
+        self,
+        file: UploadFile,
+        session: Optional[AsyncSession] = None,
+    ) -> VideoUploadResponse:
+        """Validate uploaded video, store it safely, persist to PostgreSQL, and queue background CV inference."""
         filename = file.filename or "unknown.mp4"
         ext = Path(filename).suffix.lower()
 
@@ -100,19 +131,27 @@ class VideoService:
                 detail="Uploaded file is empty (0 bytes).",
             )
 
-        uploaded_time_str = datetime.datetime.now().strftime("Today %H:%M")
-
-        job = VideoJob(
+        # Persist initial record in PostgreSQL
+        new_job = VideoJobModel(
             id=job_id,
-            file=safe_name,
-            uploaded=uploaded_time_str,
+            filename=safe_name,
+            storage_path=str(dest_path),
+            file_size_bytes=total_bytes,
             status="queued",
             frames=0,
-            customersDetected=0,
+            customers_detected=0,
         )
-        self._jobs[job_id] = job
 
-        logger.info(f"Queued video job {job_id} ({safe_name}, {total_bytes} bytes)")
+        if session is not None:
+            session.add(new_job)
+            await session.commit()
+        else:
+            session_factory = get_session_factory()
+            async with session_factory() as s:
+                async with s.begin():
+                    s.add(new_job)
+
+        logger.info(f"Persisted and queued video job {job_id} ({safe_name}, {total_bytes} bytes)")
 
         # Schedule asynchronous processing in background
         asyncio.create_task(self._run_async_job(job_id, dest_path))
@@ -124,102 +163,285 @@ class VideoService:
             message="Video queued for CV inference.",
         )
 
-    def _sync_process(self, job_id: str, video_path: Path) -> Dict[str, Any]:
-        """Synchronous target executed inside ThreadPoolExecutor to prevent blocking loop."""
-        def progress_cb(current_frames: int, unique_customers: int) -> None:
-            if job_id in self._jobs:
-                job = self._jobs[job_id]
-                self._jobs[job_id] = job.model_copy(
-                    update={
-                        "status": "processing",
-                        "frames": current_frames,
-                        "customersDetected": unique_customers,
-                    }
-                )
+    def _sync_process(self, video_path: Path) -> Dict[str, Any]:
+        """Synchronous target executed inside ThreadPoolExecutor.
 
-        return self.cv_service.process_video(
-            video_path=video_path,
-            progress_callback=progress_cb,
-        )
+        Never interacts with database sessions or async loops.
+        """
+        return self.cv_service.process_video(video_path=video_path)
+
+    async def persist_inference_and_tracking(
+        self,
+        job_id: str,
+        cv_results: Dict[str, Any],
+        session: Optional[AsyncSession] = None,
+    ) -> InferenceResult:
+        """Persist YOLO inference results and ByteTrack tracking summaries in a single transactional unit."""
+        total_frames = cv_results["total_frames"]
+        customers_detected = cv_results["unique_customers"]
+        duration_s = cv_results["duration_seconds"]
+        fps = cv_results["fps"]
+        peak_count = cv_results["peak_occupancy"]
+        avg_dwell_s = cv_results["average_dwell_seconds"]
+        detections = cv_results.get("detections", [])
+        tracking_data = cv_results.get("tracking_summaries", [])
+        processed_at = datetime.datetime.now(datetime.timezone.utc)
+
+        sample_dets = [
+            d.model_dump() if hasattr(d, "model_dump") else d
+            for d in detections
+        ]
+        clean_raw_metrics = {
+            k: v for k, v in cv_results.items()
+            if k != "detections"
+        }
+
+        async def _do_persist(s: AsyncSession) -> InferenceResult:
+            # Prevent duplicate records on retry
+            await s.execute(delete(InferenceResult).where(InferenceResult.job_id == job_id))
+            await s.execute(delete(TrackingSummary).where(TrackingSummary.job_id == job_id))
+
+            inference_orm = InferenceResult(
+                job_id=job_id,
+                total_frames=total_frames,
+                customers_detected=customers_detected,
+                peak_count=peak_count,
+                average_dwell_seconds=avg_dwell_s,
+                sample_detections=sample_dets,
+                raw_metrics=clean_raw_metrics,
+            )
+            s.add(inference_orm)
+
+            for t in tracking_data:
+                summary_orm = TrackingSummary(
+                    job_id=job_id,
+                    track_id=t["track_id"],
+                    first_frame=t["first_frame"],
+                    last_frame=t["last_frame"],
+                    dwell_seconds=t["dwell_seconds"],
+                    hit_count=t["hit_count"],
+                    hit_rate=t["hit_rate"],
+                    crossed_entrance=t["crossed_entrance"],
+                    crossed_exit=t["crossed_exit"],
+                )
+                s.add(summary_orm)
+
+            stmt = (
+                update(VideoJobModel)
+                .where(VideoJobModel.id == job_id)
+                .values(
+                    status="done",
+                    frames=total_frames,
+                    customers_detected=customers_detected,
+                    duration_seconds=duration_s,
+                    fps=fps,
+                    processed_at=processed_at,
+                )
+            )
+            await s.execute(stmt)
+            return inference_orm
+
+        if session is not None:
+            inf = await _do_persist(session)
+            await session.commit()
+        else:
+            session_factory = get_session_factory()
+            async with session_factory() as s:
+                async with s.begin():
+                    inf = await _do_persist(s)
+
+        return inf
 
     async def _run_async_job(self, job_id: str, video_path: Path) -> None:
-        """Asynchronous worker executing CV inference, updating status, and invoking rule engine."""
+        """Asynchronous worker executing CV inference, persisting results in DB, and invoking rule engine."""
         loop = asyncio.get_running_loop()
-        job = self._jobs.get(job_id)
-        if not job:
-            return
+        session_factory = get_session_factory()
 
-        self._jobs[job_id] = job.model_copy(update={"status": "processing"})
-        logger.info(f"Job {job_id} status transitioned to 'processing'")
+        # Transition status to processing in dedicated session
+        try:
+            async with session_factory() as session:
+                async with session.begin():
+                    stmt = (
+                        update(VideoJobModel)
+                        .where(VideoJobModel.id == job_id)
+                        .values(status="processing")
+                    )
+                    await session.execute(stmt)
+            logger.info(f"Job {job_id} status transitioned to 'processing' in DB")
+        except Exception as exc:
+            logger.error(f"Failed to update job {job_id} status to processing: {exc}")
 
         try:
-            cv_results = await loop.run_in_executor(_executor, self._sync_process, job_id, video_path)
+            cv_results = await loop.run_in_executor(_executor, self._sync_process, video_path)
 
-            total_frames = cv_results["total_frames"]
-            customers_detected = cv_results["unique_customers"]
-            duration_s = cv_results["duration_seconds"]
-            fps = cv_results["fps"]
-            peak_count = cv_results["peak_occupancy"]
-            avg_dwell_s = cv_results["average_dwell_seconds"]
-            detections = cv_results["detections"]
-            processed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-            # Store finished job state
-            self._jobs[job_id] = self._jobs[job_id].model_copy(
-                update={
-                    "status": "done",
-                    "frames": total_frames,
-                    "customersDetected": customers_detected,
-                    "durationSeconds": duration_s,
-                    "fps": fps,
-                    "processedAt": processed_at,
-                }
-            )
-
-            # Store results conforming to VideoResultsResponse schema
-            self._results[job_id] = VideoResultsResponse(
-                jobId=job_id,
-                status="done",
-                totalFrames=total_frames,
-                customersDetected=customers_detected,
-                peakCount=peak_count,
-                averageDwellSeconds=avg_dwell_s,
-                detections=detections,
-            )
-
-            self._raw_cv_results[job_id] = cv_results
+            # Persist results in PostgreSQL
+            await self.persist_inference_and_tracking(job_id, cv_results)
 
             # Evaluate CV telemetry in RuleEngine for genuine alerts
             rule_engine = get_rule_engine()
-            rule_engine.evaluate_cv_results(cv_results)
+            await rule_engine.evaluate_and_persist(cv_results, job_id=job_id)
 
-            logger.info(f"Job {job_id} completed successfully ({customers_detected} customers detected).")
+            # Persist and roll up analytics in PostgreSQL
+            from app.services.analytics_service import get_analytics_service
+            analytics_service = get_analytics_service()
+            await analytics_service.record_job_analytics(job_id, cv_results)
+
+            cust_count = cv_results.get("unique_customers", 0)
+            tracks_count = len(cv_results.get("tracking_summaries", []))
+            logger.info(
+                f"Job {job_id} completed and persisted successfully "
+                f"({cust_count} customers, {tracks_count} tracking summaries)."
+            )
 
         except Exception as exc:
             logger.exception(f"Inference job {job_id} failed: {exc}")
-            if job_id in self._jobs:
-                self._jobs[job_id] = self._jobs[job_id].model_copy(
-                    update={
-                        "status": "failed",
-                        "error": str(exc),
-                    }
+            try:
+                async with session_factory() as session:
+                    async with session.begin():
+                        stmt = (
+                            update(VideoJobModel)
+                            .where(VideoJobModel.id == job_id)
+                            .values(
+                                status="failed",
+                                error_message=str(exc),
+                            )
+                        )
+                        await session.execute(stmt)
+            except Exception as db_exc:
+                logger.error(f"Failed to update failed job {job_id} in DB: {db_exc}")
+
+    async def get_job(
+        self,
+        job_id: str,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[VideoJobSchema]:
+        """Fetch job metadata from PostgreSQL by id."""
+        if session is not None:
+            job_orm = await session.get(VideoJobModel, job_id)
+            return self._orm_to_schema(job_orm) if job_orm else None
+
+        session_factory = get_session_factory()
+        async with session_factory() as s:
+            job_orm = await s.get(VideoJobModel, job_id)
+            return self._orm_to_schema(job_orm) if job_orm else None
+
+    async def list_jobs(
+        self,
+        session: Optional[AsyncSession] = None,
+    ) -> List[VideoJobSchema]:
+        """List historical video processing jobs ordered by upload time descending."""
+        stmt = select(VideoJobModel).order_by(VideoJobModel.uploaded_at.desc())
+        if session is not None:
+            result = await session.execute(stmt)
+            return [self._orm_to_schema(j) for j in result.scalars().all()]
+
+        session_factory = get_session_factory()
+        async with session_factory() as s:
+            result = await s.execute(stmt)
+            return [self._orm_to_schema(j) for j in result.scalars().all()]
+
+    async def update_job_status(
+        self,
+        job_id: str,
+        status: JobStatus,
+        error_message: Optional[str] = None,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[VideoJobSchema]:
+        """Update job status and optional error message in PostgreSQL."""
+        values: Dict[str, Any] = {"status": status}
+        if error_message is not None:
+            values["error_message"] = error_message
+        if status == "done":
+            values["processed_at"] = datetime.datetime.now(datetime.timezone.utc)
+
+        stmt = update(VideoJobModel).where(VideoJobModel.id == job_id).values(**values)
+
+        if session is not None:
+            await session.execute(stmt)
+            await session.commit()
+            return await self.get_job(job_id, session=session)
+
+        session_factory = get_session_factory()
+        async with session_factory() as s:
+            async with s.begin():
+                await s.execute(stmt)
+            return await self.get_job(job_id, session=s)
+
+    async def get_results(
+        self,
+        job_id: str,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[VideoResultsResponse]:
+        """Fetch detailed inference results for a completed job from PostgreSQL."""
+        stmt = (
+            select(InferenceResult, VideoJobModel)
+            .join(VideoJobModel, InferenceResult.job_id == VideoJobModel.id)
+            .where(InferenceResult.job_id == job_id)
+        )
+        if session is not None:
+            res = await session.execute(stmt)
+            row = res.first()
+        else:
+            session_factory = get_session_factory()
+            async with session_factory() as s:
+                res = await s.execute(stmt)
+                row = res.first()
+
+        if not row:
+            return None
+
+        inf, job = row
+        detections: List[VideoDetectionBox] = []
+        for d in inf.sample_detections:
+            if isinstance(d, dict):
+                box_dict = d.get("box", {})
+                detections.append(
+                    VideoDetectionBox(
+                        id=d.get("id", "det-0"),
+                        label=d.get("label", "person"),
+                        confidence=d.get("confidence", 1.0),
+                        box=VideoBox(
+                            x=box_dict.get("x", 0),
+                            y=box_dict.get("y", 0),
+                            width=box_dict.get("width", 1),
+                            height=box_dict.get("height", 1),
+                        ),
+                    )
                 )
 
-    def get_job(self, job_id: str) -> Optional[VideoJob]:
-        """Fetch job metadata by id."""
-        return self._jobs.get(job_id)
+        return VideoResultsResponse(
+            jobId=inf.job_id,
+            status=job.status,  # type: ignore[arg-type]
+            totalFrames=inf.total_frames,
+            customersDetected=inf.customers_detected,
+            peakCount=inf.peak_count,
+            averageDwellSeconds=inf.average_dwell_seconds,
+            detections=detections,
+        )
 
-    def list_jobs(self) -> List[VideoJob]:
-        """List historical video processing jobs."""
-        return list(reversed(list(self._jobs.values())))
+    async def get_tracking_summaries(
+        self,
+        job_id: str,
+        session: Optional[AsyncSession] = None,
+    ) -> List[TrackingSummary]:
+        """Fetch ByteTrack tracking summary records for a video job from PostgreSQL."""
+        stmt = (
+            select(TrackingSummary)
+            .where(TrackingSummary.job_id == job_id)
+            .order_by(TrackingSummary.track_id.asc())
+        )
+        if session is not None:
+            res = await session.execute(stmt)
+            return list(res.scalars().all())
 
-    def get_results(self, job_id: str) -> Optional[VideoResultsResponse]:
-        """Fetch detailed inference results for a completed job."""
-        return self._results.get(job_id)
+        session_factory = get_session_factory()
+        async with session_factory() as s:
+            res = await s.execute(stmt)
+            return list(res.scalars().all())
 
     def get_raw_results(self) -> List[Dict[str, Any]]:
-        """Return raw completed CV results for analytics aggregation."""
-        return list(self._raw_cv_results.values())
+        """Deprecated: Returns empty list as analytics are directly queried from PostgreSQL."""
+        return []
 
 
 _video_service: Optional[VideoService] = None

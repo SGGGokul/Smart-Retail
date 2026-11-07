@@ -14,4 +14,4 @@ router = APIRouter()
 async def chat_assistant(payload: AssistantChatRequest) -> AssistantChatResponse:
     """Sends user retail queries to the assistant service."""
     assistant_service = get_assistant_service()
-    return assistant_service.handle_chat(payload)
+    return await assistant_service.handle_chat(payload)

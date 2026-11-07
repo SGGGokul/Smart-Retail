@@ -31,7 +31,7 @@ async def upload_video(file: UploadFile = File(...)) -> VideoUploadResponse:
 async def list_videos() -> List[VideoJob]:
     """Retrieves all historical and active video processing jobs."""
     video_service = get_video_service()
-    return video_service.list_jobs()
+    return await video_service.list_jobs()
 
 
 @router.get(
@@ -42,7 +42,7 @@ async def list_videos() -> List[VideoJob]:
 async def get_video(id: str) -> VideoJob:
     """Checks the processing status and metadata of a video job."""
     video_service = get_video_service()
-    job = video_service.get_job(id)
+    job = await video_service.get_job(id)
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -59,14 +59,14 @@ async def get_video(id: str) -> VideoJob:
 async def get_video_results(id: str) -> VideoResultsResponse:
     """Fetches detailed detection bounding boxes, customer counts, and metrics for a completed video job."""
     video_service = get_video_service()
-    job = video_service.get_job(id)
+    job = await video_service.get_job(id)
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Video job '{id}' was not found.",
         )
 
-    results = video_service.get_results(id)
+    results = await video_service.get_results(id)
     if results is None:
         if job.status == "failed":
             raise HTTPException(

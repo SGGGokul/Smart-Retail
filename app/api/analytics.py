@@ -20,7 +20,7 @@ router = APIRouter()
 async def get_analytics_summary() -> AnalyticsSummaryResponse:
     """Returns aggregate KPI metrics for the store overview dashboard."""
     analytics_service = get_analytics_service()
-    return analytics_service.get_summary()
+    return await analytics_service.get_summary()
 
 
 @router.get(
@@ -33,7 +33,7 @@ async def get_analytics_traffic(
 ) -> AnalyticsTrafficResponse:
     """Retrieves daily and hourly customer traffic counts."""
     analytics_service = get_analytics_service()
-    return analytics_service.get_traffic(range_param=range)
+    return await analytics_service.get_traffic(range_param=range)
 
 
 @router.get(
@@ -44,7 +44,7 @@ async def get_analytics_traffic(
 async def get_analytics_dwell_time() -> AnalyticsDwellResponse:
     """Retrieves customer dwell time per store department/section."""
     analytics_service = get_analytics_service()
-    return analytics_service.get_dwell_time()
+    return await analytics_service.get_dwell_time()
 
 
 @router.get(
@@ -55,4 +55,4 @@ async def get_analytics_dwell_time() -> AnalyticsDwellResponse:
 async def get_analytics_queues() -> AnalyticsQueuesResponse:
     """Retrieves active checkout queue telemetry."""
     analytics_service = get_analytics_service()
-    return analytics_service.get_queues()
+    return await analytics_service.get_queues()

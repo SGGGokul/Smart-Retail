@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,6 +27,12 @@ class Settings(BaseSettings):
         "http://localhost:3001",
         "http://127.0.0.1:3001",
     ]
+
+    # Database Configuration (PostgreSQL with asyncpg driver)
+    DATABASE_URL: Optional[str] = "postgresql+asyncpg://postgres:postgres@localhost:5432/retailiq"
+    DATABASE_POOL_SIZE: int = 10
+    DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_ECHO: bool = False
 
     # Model configuration
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
@@ -64,7 +70,7 @@ class Settings(BaseSettings):
         return v
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(BASE_DIR / ".env", ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

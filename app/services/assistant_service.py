@@ -15,15 +15,15 @@ class AssistantService:
     Does not fabricate GenAI answers; transparently states capabilities and boundaries.
     """
 
-    def handle_chat(self, payload: AssistantChatRequest) -> AssistantChatResponse:
+    async def handle_chat(self, payload: AssistantChatRequest) -> AssistantChatResponse:
         """Process retail query and return verifiable answer conforming to API_CONTRACT.md."""
         message = payload.message.lower().strip()
         conv_id = payload.conversationId or f"conv-{uuid.uuid4().hex[:6]}"
 
         analytics_service = get_analytics_service()
-        summary = analytics_service.get_summary()
+        summary = await analytics_service.get_summary()
         rule_engine = get_rule_engine()
-        alerts = rule_engine.list_alerts()
+        alerts = await rule_engine.list_alerts()
 
         # Follow-up prompts suggested to user
         follow_ups = [

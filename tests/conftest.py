@@ -1,6 +1,28 @@
+import os
 import pytest
 from fastapi.testclient import TestClient
+from app.core.config import get_settings
+from app.db.session import normalize_database_url
 from app.main import app
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_test_db():
+    """Ensure test runs execute against the isolated retailiq_test database."""
+    settings = get_settings()
+    base_url = normalize_database_url(settings.DATABASE_URL)
+    test_db_url = base_url.rsplit("/", 1)[0] + "/retailiq_test"
+    original_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = test_db_url
+    get_settings.cache_clear()
+
+    yield
+
+    if original_url is not None:
+        os.environ["DATABASE_URL"] = original_url
+    else:
+        os.environ.pop("DATABASE_URL", None)
+    get_settings.cache_clear()
 
 
 @pytest.fixture
