@@ -6,6 +6,15 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from app.core.config import get_settings
 from app.schemas.video import VideoBox, VideoDetectionBox
+from app.services.visit_service import CustomerVisit, VisitEvent, VisitService, VisitStatus
+from app.services.zone_service import (
+    BoundaryLine,
+    CrossingDirection,
+    StoreZone,
+    ZoneEvent,
+    ZoneService,
+    ZoneType,
+)
 
 logger = logging.getLogger("retailiq.cv_service")
 
@@ -35,6 +44,7 @@ class CVService:
         confidence: Optional[float] = None,
         min_track_seconds: Optional[float] = None,
         zone_coords: Optional[Tuple[int, int, int, int]] = None,
+        camera_id: str = "cam-main",
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, Any]:
         """Process video through YOLO11n + ByteTrack with isolated tracker state.
@@ -44,6 +54,7 @@ class CVService:
             confidence: Detection confidence threshold (default: settings.CV_CONFIDENCE).
             min_track_seconds: Minimum duration to count dwell time (default: settings.CV_MIN_TRACK_SECONDS).
             zone_coords: (x1, x2, y1, y2) bounding box for entry/exit zone.
+            camera_id: Identifier for the CCTV stream.
             progress_callback: Optional callable receiving (frames_processed, current_unique_customers).
 
         Returns:
@@ -81,6 +92,106 @@ class CVService:
             zone_x2 = settings.CV_ZONE_X2
             zone_y1 = settings.CV_ZONE_Y1
             zone_y2 = settings.CV_ZONE_Y2
+
+        # Initialize spatial ZoneService and anonymous Customer VisitService
+        zone_service = ZoneService(max_missed_frames=15, min_zone_dwell_seconds=min_duration)
+        visit_service = VisitService(store_id="store-104")
+
+        # 1. Register boundary tripwire lines for store entrance & exit
+        line_entrance = BoundaryLine(
+            line_id="line-entrance",
+            name="Store Entrance Line",
+            p1=(float(zone_x2), float(zone_y1)),
+            p2=(float(zone_x2), float(zone_y2)),
+            camera_id=camera_id,
+        )
+        line_exit = BoundaryLine(
+            line_id="line-exit",
+            name="Store Exit Line",
+            p1=(float(zone_x1), float(zone_y1)),
+            p2=(float(zone_x1), float(zone_y2)),
+            camera_id=camera_id,
+        )
+        zone_service.register_boundary_line(line_entrance)
+        zone_service.register_boundary_line(line_exit)
+        visit_service.register_entrance_line("line-entrance", camera_id=camera_id)
+        visit_service.register_exit_line("line-exit", camera_id=camera_id)
+
+        # 2. Register standard supermarket zones scaled to video frame
+        w_f = float(width)
+        h_f = float(height)
+
+        entrance_zone = StoreZone(
+            zone_id="zone-entrance",
+            name="Entrance Area",
+            zone_type=ZoneType.ENTRANCE,
+            polygon=[
+                (float(zone_x1), float(zone_y1)),
+                (float(zone_x2), float(zone_y1)),
+                (float(zone_x2), float(zone_y2)),
+                (float(zone_x1), float(zone_y2)),
+            ],
+            camera_id=camera_id,
+            min_dwell_seconds=min_duration,
+        )
+        produce_zone = StoreZone(
+            zone_id="zone-produce",
+            name="Produce Section",
+            zone_type=ZoneType.DEPARTMENT,
+            polygon=[
+                (0.0, 0.0),
+                (w_f * 0.45, 0.0),
+                (w_f * 0.45, h_f * 0.5),
+                (0.0, h_f * 0.5),
+            ],
+            camera_id=camera_id,
+            min_dwell_seconds=min_duration,
+        )
+        aisle1_zone = StoreZone(
+            zone_id="zone-aisle1",
+            name="Aisle 1 - Packaged Goods",
+            zone_type=ZoneType.AISLE,
+            polygon=[
+                (w_f * 0.45, 0.0),
+                (w_f, 0.0),
+                (w_f, h_f * 0.5),
+                (w_f * 0.45, h_f * 0.5),
+            ],
+            camera_id=camera_id,
+            min_dwell_seconds=min_duration,
+        )
+        dairy_zone = StoreZone(
+            zone_id="zone-dairy",
+            name="Dairy & Refrigerated",
+            zone_type=ZoneType.DEPARTMENT,
+            polygon=[
+                (0.0, h_f * 0.5),
+                (w_f * 0.5, h_f * 0.5),
+                (w_f * 0.5, h_f),
+                (0.0, h_f),
+            ],
+            camera_id=camera_id,
+            min_dwell_seconds=min_duration,
+        )
+        checkout_zone = StoreZone(
+            zone_id="zone-checkout",
+            name="Checkout Counters",
+            zone_type=ZoneType.CHECKOUT,
+            polygon=[
+                (w_f * 0.5, h_f * 0.5),
+                (w_f, h_f * 0.5),
+                (w_f, h_f),
+                (w_f * 0.5, h_f),
+            ],
+            camera_id=camera_id,
+            min_dwell_seconds=min_duration,
+        )
+
+        zone_service.register_zone(entrance_zone)
+        zone_service.register_zone(produce_zone)
+        zone_service.register_zone(aisle1_zone)
+        zone_service.register_zone(dairy_zone)
+        zone_service.register_zone(checkout_zone)
 
         # CRITICAL: Instantiate fresh YOLO model per job to isolate ByteTrack tracker state
         # Exactly as specified in run_merl_batch.py to prevent ID carry-over between videos
@@ -126,10 +237,13 @@ class CVService:
                 result = results[0]
 
                 current_occupancy = 0
+                active_frame_track_ids: Set[int] = set()
+                current_time_s = round(frame_number / fps, 3)
 
                 if result.boxes is not None and result.boxes.id is not None:
                     track_ids = result.boxes.id.int().cpu().tolist()
                     current_occupancy = len(track_ids)
+                    active_frame_track_ids = set(track_ids)
                     boxes_xyxy = result.boxes.xyxy.cpu().numpy()
                     confs = result.boxes.conf.cpu().tolist() if result.boxes.conf is not None else [1.0] * len(track_ids)
 
@@ -175,6 +289,17 @@ class CVService:
 
                         previous_positions[track_id] = (foot_x, foot_y)
 
+                        # Update spatial zone tracking and dispatch to visit service
+                        z_events = zone_service.update_track(
+                            tracker_id=track_id,
+                            box_xyxy=(float(x1), float(y1), float(x2), float(y2)),
+                            frame_idx=frame_number,
+                            timestamp=current_time_s,
+                            camera_id=camera_id,
+                        )
+                        for z_ev in z_events:
+                            visit_service.process_zone_event(z_ev)
+
                         # Collect sample detections
                         if len(sample_detections) < max_sample_detections:
                             sample_detections.append(
@@ -191,6 +316,16 @@ class CVService:
                                 )
                             )
 
+                # Check for missed tracks to handle occlusions and zone departures
+                missed_z_events = zone_service.handle_missed_detections(
+                    current_frame=frame_number,
+                    current_timestamp=current_time_s,
+                    camera_id=camera_id,
+                    active_tracker_ids=active_frame_track_ids,
+                )
+                for mz_ev in missed_z_events:
+                    visit_service.process_zone_event(mz_ev)
+
                 occupancy_values.append(current_occupancy)
 
                 if progress_callback is not None and frame_number % 15 == 0:
@@ -202,6 +337,18 @@ class CVService:
         elapsed_seconds = max(0.001, time.time() - start_time)
         measured_fps = round(frame_number / elapsed_seconds, 2)
         total_duration = round(frame_number / fps, 2)
+
+        # Conclude any open zone and visit sessions
+        end_events = zone_service.end_video(final_timestamp=total_duration, camera_id=camera_id)
+        for e_ev in end_events:
+            visit_service.process_zone_event(e_ev)
+
+        visit_service.end_incomplete_sessions(final_timestamp=total_duration)
+
+        all_visits = visit_service.get_all_visits()
+        all_journey_events: List[VisitEvent] = []
+        for v in all_visits:
+            all_journey_events.extend(v.journey_events)
 
         # Calculate dwell times (filtering out noise < min_duration)
         observed_durations: List[float] = []
@@ -277,4 +424,6 @@ class CVService:
             "exits": exits,
             "detections": sample_detections,
             "tracking_summaries": tracking_summaries,
+            "visits": all_visits,
+            "journey_events": all_journey_events,
         }

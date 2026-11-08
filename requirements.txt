@@ -13,3 +13,7 @@ asyncpg>=0.29.0
 alembic>=1.13.0
 aiosqlite>=0.20.0
 greenlet>=3.0.0
+pypdf>=5.0.0
+transformers>=4.40.0
+pgvector>=0.3.0
+redis>=5.0.0

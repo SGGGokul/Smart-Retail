@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import get_session_factory
+from app.models.customer_journey import CustomerVisitModel, CustomerZoneEventModel
 from app.models.video import (
     InferenceResult,
     TrackingSummary,
@@ -193,13 +194,28 @@ class VideoService:
         ]
         clean_raw_metrics = {
             k: v for k, v in cv_results.items()
-            if k != "detections"
+            if k not in ("detections", "visits", "journey_events")
         }
+        visits = cv_results.get("visits", [])
+        journey_events = cv_results.get("journey_events", [])
 
         async def _do_persist(s: AsyncSession) -> InferenceResult:
             # Prevent duplicate records on retry
             await s.execute(delete(InferenceResult).where(InferenceResult.job_id == job_id))
             await s.execute(delete(TrackingSummary).where(TrackingSummary.job_id == job_id))
+
+            # Clean up existing customer visits/events for this job if any
+            existing_visits_q = await s.execute(
+                select(CustomerVisitModel.id).where(CustomerVisitModel.video_job_id == job_id)
+            )
+            existing_vids = list(existing_visits_q.scalars().all())
+            if existing_vids:
+                await s.execute(
+                    delete(CustomerZoneEventModel).where(CustomerZoneEventModel.visit_id.in_(existing_vids))
+                )
+                await s.execute(
+                    delete(CustomerVisitModel).where(CustomerVisitModel.video_job_id == job_id)
+                )
 
             inference_orm = InferenceResult(
                 job_id=job_id,
@@ -225,6 +241,41 @@ class VideoService:
                     crossed_exit=t["crossed_exit"],
                 )
                 s.add(summary_orm)
+
+            # Persist customer visits and journey events
+            for v in visits:
+                v_status = v.status.value if hasattr(v.status, "value") else str(v.status)
+                cam_id = list(v.cameras_seen)[0] if v.cameras_seen else "cam-main"
+                visit_orm = CustomerVisitModel(
+                    id=v.visit_id,
+                    customer_id=v.customer_id,
+                    video_job_id=job_id,
+                    store_id=getattr(v, "store_id", "store-104"),
+                    camera_id=cam_id,
+                    entry_time=float(v.entry_time),
+                    exit_time=float(v.exit_time) if v.exit_time is not None else None,
+                    duration_seconds=float(v.duration_seconds),
+                    status=v_status,
+                    zones_visited=list(v.zones_visited),
+                    zone_dwell_times=dict(v.zone_dwell_times),
+                    is_repeat_visit=bool(v.is_repeat_visit),
+                    visit_number=int(v.visit_number),
+                )
+                s.add(visit_orm)
+
+            for ev in journey_events:
+                event_orm = CustomerZoneEventModel(
+                    id=ev.event_id,
+                    visit_id=ev.visit_id,
+                    customer_id=ev.customer_id,
+                    camera_id=ev.camera_id,
+                    zone_id=ev.zone_id,
+                    zone_name=ev.zone_name,
+                    event_type=ev.event_type,
+                    timestamp=float(ev.timestamp),
+                    dwell_seconds=float(ev.dwell_seconds),
+                )
+                s.add(event_orm)
 
             stmt = (
                 update(VideoJobModel)

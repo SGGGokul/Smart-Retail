@@ -1,4 +1,5 @@
 import os
+import uuid
 import pytest
 from fastapi.testclient import TestClient
 from app.core.config import get_settings
@@ -27,6 +28,7 @@ def configure_test_db():
 
 @pytest.fixture
 def client() -> TestClient:
-    """Fixture providing synchronous FastAPI test client."""
-    with TestClient(app) as test_client:
+    """Fixture providing synchronous FastAPI test client with isolated client identity."""
+    test_uid = f"test-client-{uuid.uuid4().hex[:8]}"
+    with TestClient(app, headers={"X-User-ID": test_uid}) as test_client:
         yield test_client

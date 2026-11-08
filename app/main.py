@@ -12,6 +12,7 @@ from app.api.api_v1 import api_v1_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
+from app.core.rate_limit import RateLimitMiddleware, get_rate_limiter
 from app.schemas.error import ErrorDetail, ErrorEnvelope
 from app.services.model_service import get_model_service
 
@@ -39,8 +40,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "Backend foundation is operating in API/management mode."
         )
 
+    # ------------------------------------------------------------------
+    # Persistent RAG Knowledge Base Startup Reload
+    # ------------------------------------------------------------------
+    # Connect to PostgreSQL, load persisted document metadata, chunk text, and precomputed
+    # 384-D embeddings into in-memory BM25 index without re-generating embeddings.
+    try:
+        from pathlib import Path
+        from app.db.session import get_session_factory
+        from app.services.rag.rag_service import get_rag_service
+
+        rag_service = get_rag_service()
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            count = await rag_service.load_persisted_corpus(session)
+            if count > 0:
+                logger.info(
+                    f"RAG Knowledge Base startup reload: {count} chunk(s) reloaded "
+                    f"from database without re-embedding."
+                )
+            else:
+                # First boot: database is empty, seed from default documents if present
+                docs_dir = Path("data/documents")
+                if docs_dir.exists():
+                    logger.info("RAG database is empty on first startup; ingesting default documents...")
+                    for doc_file in docs_dir.glob("*"):
+                        if doc_file.suffix.lower() in {".txt", ".pdf", ".md"}:
+                            await rag_service.aingest_document(doc_file, session=session)
+                    logger.info(
+                        f"Initial document persistence complete: {rag_service.get_corpus_size()} chunk(s) "
+                        f"persisted to database."
+                    )
+    except Exception as err:
+        logger.warning(f"RAG database startup reload was bypassed or unconfigured: {err}")
+
     yield
 
+    limiter = get_rate_limiter()
+    await limiter.close()
     logger.info(f"Shutting down {settings.PROJECT_NAME}")
 
 
@@ -69,6 +106,9 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Centralized Redis Rate Limiting
+    application.add_middleware(RateLimitMiddleware)
 
     # Register root health check strictly matching API_CONTRACT.md section 1
     application.include_router(health_router, prefix="", tags=["Health"])
