@@ -4,6 +4,7 @@ import type {
   VideoUploadResponse,
   VideoJob,
   VideoResultsResponse,
+  ImageDetectionResponse,
 } from "@/types/detection";
 
 /**
@@ -48,3 +49,24 @@ export async function listVideoJobs(signal?: AbortSignal): Promise<VideoJob[]> {
   if (res && Array.isArray((res as { jobs: VideoJob[] }).jobs)) return (res as { jobs: VideoJob[] }).jobs;
   return [];
 }
+
+/**
+ * Uploads a retail or shelf image for YOLO object and shelf detection.
+ * POST /api/v1/images/detect
+ */
+export async function detectImage(
+  file: File,
+  confidence: number = 0.25,
+  signal?: AbortSignal
+): Promise<ImageDetectionResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const endpoint = `${ENDPOINTS.IMAGES_DETECT}?confidence=${confidence}`;
+  return apiRequest<ImageDetectionResponse>(endpoint, {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+}
+

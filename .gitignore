@@ -51,3 +51,8 @@ skills-lock.json
 
 # separate repositories
 Backend/
+
+# graphify
+graphify-out/
+.graphifyignore
+

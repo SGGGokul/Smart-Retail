@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: retailiq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-retailiq}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-retailiq}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - retailiq_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: retailiq-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - retailiq_net
+
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: retailiq-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-retailiq}
+      RATE_LIMIT_REDIS_URL: redis://redis:6379/1
+      RATE_LIMIT_ENABLED: "true"
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./Backend/data:/app/data
+      - model_cache:/root/.cache
+    networks:
+      - retailiq_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: retailiq-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - retailiq_net
+
+volumes:
+  postgres_data:
+    name: retailiq_postgres_data
+  redis_data:
+    name: retailiq_redis_data
+  model_cache:
+    name: retailiq_model_cache
+
+networks:
+  retailiq_net:
+    name: retailiq_net
+    driver: bridge

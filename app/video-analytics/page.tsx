@@ -12,10 +12,13 @@ import {
   getVideoJob,
   getVideoResults,
   listVideoJobs,
+  detectImage,
 } from "@/lib/api/video-analytics";
-import type { VideoJob, VideoResultsResponse, VideoDetectionBox } from "@/types/detection";
+import type { VideoJob, VideoResultsResponse, VideoDetectionBox, ImageDetectionResponse } from "@/types/detection";
 
-const ALLOWED_EXTENSIONS = [".mp4", ".webm", ".mov", ".avi", ".png", ".jpg", ".jpeg"];
+const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov", ".avi"];
+const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
+const ALLOWED_EXTENSIONS = [...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS];
 const MAX_FILE_SIZE_MB = 200;
 
 export default function VideoAnalyticsPage() {
@@ -24,6 +27,8 @@ export default function VideoAnalyticsPage() {
   const [activeResults, setActiveResults] = useState<VideoResultsResponse | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageResult, setImageResult] = useState<ImageDetectionResponse | null>(null);
+  const [showAnnotatedImage, setShowAnnotatedImage] = useState(true);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
@@ -159,14 +164,20 @@ export default function VideoAnalyticsPage() {
     }, 2500);
   }, [loadJobResults]);
 
+  const isSelectedFileImage = Boolean(
+    selectedFile &&
+      IMAGE_EXTENSIONS.includes("." + selectedFile.name.split(".").pop()?.toLowerCase())
+  );
+
   const validateAndSetFile = (file: File) => {
     setValidationError(null);
     setErrorMessage(null);
+    setImageResult(null);
 
     const extension = "." + file.name.split(".").pop()?.toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(extension)) {
       setValidationError(
-        `Unsupported format "${extension}". Please upload an MP4, WebM, MOV, AVI, or Image file.`
+        `Unsupported format "${extension}". Please upload an MP4, WebM, MOV, AVI video or JPG, JPEG, PNG, WEBP image.`
       );
       return;
     }
@@ -208,6 +219,28 @@ export default function VideoAnalyticsPage() {
     setErrorMessage(null);
     setValidationError(null);
 
+    const ext = "." + selectedFile.name.split(".").pop()?.toLowerCase();
+
+    // 1. Dedicated Image Detection Route
+    if (IMAGE_EXTENSIONS.includes(ext)) {
+      try {
+        const result = await detectImage(selectedFile);
+        setImageResult(result);
+        setShowAnnotatedImage(true);
+        setToastMessage(
+          `Image inference complete: ${result.totalDetections} object(s) detected in ${selectedFile.name}.`
+        );
+      } catch (err) {
+        setErrorMessage(
+          `Failed to process image with FastAPI YOLO: ${(err as Error).message}. Verify that the backend is running at http://localhost:8000.`
+        );
+      } finally {
+        setIsUploading(false);
+      }
+      return;
+    }
+
+    // 2. Video Processing Route (Asynchronous Job Queue)
     try {
       const uploadRes = await uploadVideo(selectedFile);
 
@@ -222,6 +255,7 @@ export default function VideoAnalyticsPage() {
 
       setJobs((prev) => [newJob, ...prev]);
       setActiveJobId(uploadRes.jobId);
+      setImageResult(null);
       setToastMessage(uploadRes.message || `Uploaded ${selectedFile.name}. Processing queued.`);
 
       // Start asynchronous polling for completion
@@ -274,12 +308,29 @@ export default function VideoAnalyticsPage() {
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-[#eeefec]">
               <div className="flex items-center gap-2">
                 <div className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-950 text-emerald-300">
-                  <MaterialIcon name="videocam" className="h-3.5 w-3.5" aria-hidden="true" />
+                  <MaterialIcon
+                    name={isSelectedFileImage ? "image" : "videocam"}
+                    className="h-3.5 w-3.5"
+                    aria-hidden="true"
+                  />
                 </div>
                 <div>
                   <h2 className="font-heading text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <span>{activeJob ? activeJob.file : selectedFile ? selectedFile.name : "Video Viewport"}</span>
-                    {activeJob && (
+                    <span>
+                      {isSelectedFileImage
+                        ? selectedFile?.name || "Image Viewport"
+                        : activeJob
+                        ? activeJob.file
+                        : selectedFile
+                        ? selectedFile.name
+                        : "Video Viewport"}
+                    </span>
+                    {isSelectedFileImage && imageResult && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
+                        {imageResult.totalDetections} Detections
+                      </span>
+                    )}
+                    {!isSelectedFileImage && activeJob && (
                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#f2f3ef] text-slate-600">
                         Job: {activeJob.id}
                       </span>
@@ -290,29 +341,50 @@ export default function VideoAnalyticsPage() {
 
               {/* Viewport Controls */}
               <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setShowOverlay(!showOverlay)}
-                  className="flex items-center gap-1 rounded-md border border-[#e6e7e3] bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-[#f8f8f6] transition-colors"
-                >
-                  {showOverlay ? (
-                    <>
-                      <MaterialIcon name="visibility_off" className="h-3 w-3 text-slate-400" aria-hidden="true" />
-                      <span>Hide Reticles</span>
-                    </>
-                  ) : (
-                    <>
-                      <MaterialIcon name="visibility" className="h-3 w-3 text-emerald-700" aria-hidden="true" />
-                      <span>Show Reticles</span>
-                    </>
-                  )}
-                </button>
+                {isSelectedFileImage && imageResult?.annotatedImage ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAnnotatedImage(!showAnnotatedImage)}
+                    className="flex items-center gap-1 rounded-md border border-[#e6e7e3] bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-[#f8f8f6] transition-colors"
+                  >
+                    <MaterialIcon
+                      name={showAnnotatedImage ? "visibility" : "visibility_off"}
+                      className="h-3 w-3 text-emerald-700"
+                      aria-hidden="true"
+                    />
+                    <span>{showAnnotatedImage ? "Annotations On" : "Raw Image"}</span>
+                  </button>
+                ) : !isSelectedFileImage ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowOverlay(!showOverlay)}
+                    className="flex items-center gap-1 rounded-md border border-[#e6e7e3] bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-[#f8f8f6] transition-colors"
+                  >
+                    {showOverlay ? (
+                      <>
+                        <MaterialIcon name="visibility_off" className="h-3 w-3 text-slate-400" aria-hidden="true" />
+                        <span>Hide Reticles</span>
+                      </>
+                    ) : (
+                      <>
+                        <MaterialIcon name="visibility" className="h-3 w-3 text-emerald-700" aria-hidden="true" />
+                        <span>Show Reticles</span>
+                      </>
+                    )}
+                  </button>
+                ) : null}
               </div>
             </div>
 
-            {/* Video Canvas Container */}
+            {/* Video or Image Canvas Container */}
             <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-slate-950 border border-slate-800 shadow-inner flex items-center justify-center select-none">
-              {previewUrl ? (
+              {isSelectedFileImage && previewUrl ? (
+                <img
+                  src={showAnnotatedImage && imageResult?.annotatedImage ? imageResult.annotatedImage : previewUrl}
+                  alt={selectedFile?.name || "Uploaded preview"}
+                  className="h-full w-full object-contain"
+                />
+              ) : previewUrl ? (
                 <video
                   ref={videoRef}
                   src={previewUrl}
@@ -326,25 +398,32 @@ export default function VideoAnalyticsPage() {
                     <MaterialIcon name="video_file" className="h-8 w-8 text-slate-600" aria-hidden="true" />
                   </div>
                   <p className="font-heading text-sm font-bold text-slate-300">
-                    No Video Stream Active
+                    No Media Stream Active
                   </p>
                   <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                    Upload an MP4, WebM, MOV, or AVI video to trigger asynchronous computer-vision inference on the FastAPI backend.
+                    Upload a store video (.mp4, .webm, .mov, .avi) or shelf image (.jpg, .jpeg, .png, .webp) to trigger YOLO computer-vision inference.
                   </p>
                 </div>
               )}
 
-              {/* Genuine Bounding Box Visualizations from Backend */}
-              {showOverlay && activeResults && activeResults.detections && activeResults.detections.length > 0 && (
+              {/* HUD Badge for Image Detection */}
+              {isSelectedFileImage && imageResult && (
+                <div className="absolute top-3 right-3 flex items-center gap-2 rounded bg-black/85 px-2.5 py-1 font-mono text-[10px] text-emerald-400 border border-emerald-800/60 tabular-nums">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  <span>
+                    {imageResult.totalDetections} DETECTIONS · {imageResult.width}×{imageResult.height}px
+                  </span>
+                </div>
+              )}
+
+              {/* Genuine Video Bounding Box Visualizations from Backend */}
+              {!isSelectedFileImage && showOverlay && activeResults && activeResults.detections && activeResults.detections.length > 0 && (
                 <div className="pointer-events-none absolute inset-0">
                   {/* Subtle Grid Reticle */}
                   <div className="absolute inset-0 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:24px_24px] opacity-10" />
 
                   {/* Render Genuine Detections */}
                   {activeResults.detections.map((det: VideoDetectionBox, index: number) => {
-                    // Normalize bounding box coordinates
-                    // Contract: box: { x, y, width, height }
-                    // If coordinates are in pixels (e.g. 120, 80) or fractions, clamp gracefully
                     const isNormalized = det.box.width <= 1 && det.box.height <= 1;
                     const left = isNormalized ? `${det.box.x * 100}%` : `${det.box.x}px`;
                     const top = isNormalized ? `${det.box.y * 100}%` : `${det.box.y}px`;
@@ -388,44 +467,112 @@ export default function VideoAnalyticsPage() {
                 </div>
               )}
             </div>
+
+            {/* Dedicated Shelf and Model Capability Notice when Image is Analyzed */}
+            {isSelectedFileImage && imageResult && (
+              <div className="mt-3 rounded-lg border border-[#e6e7e3] bg-[#f8f8f6] p-3 text-xs space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <MaterialIcon name="info" className="h-4 w-4 text-emerald-800" />
+                    Model &amp; Shelf Detection Capabilities
+                  </span>
+                  <span className="rounded bg-emerald-100 text-emerald-900 font-mono text-[10px] px-2 py-0.5 font-bold">
+                    {imageResult.isCocoGeneralModel ? "COCO 80 Vocabulary" : "Fine-tuned Model"}
+                  </span>
+                </div>
+                <p className="text-slate-600 text-[11px] leading-relaxed">
+                  {imageResult.note}
+                </p>
+                {imageResult.totalDetections > 0 ? (
+                  <div className="space-y-1.5 pt-1.5 border-t border-[#eeefec]">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-slate-700">Identified Objects:</span>
+                      {Object.entries(imageResult.detectionCounts).map(([label, count]) => (
+                        <span
+                          key={label}
+                          className="rounded-full bg-emerald-100/80 border border-emerald-300/80 px-2.5 py-0.5 text-[10px] font-bold text-emerald-900 capitalize"
+                        >
+                          {label}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500 italic pt-1 border-t border-[#eeefec]">
+                    No objects detected with confidence ≥ 0.25. Standard COCO weights detect general retail objects (e.g. bottles, cups, persons).
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Viewport Footer Telemetry Metrics */}
           <div className="mt-3 pt-3 border-t border-[#eeefec] grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div>
-              <span className="text-[10px] text-slate-400 block">Total Frames</span>
-              <span className="font-semibold text-slate-900 tabular-nums">
-                {activeResults?.totalFrames != null
-                  ? activeResults.totalFrames.toLocaleString()
-                  : activeJob?.frames != null && activeJob.frames > 0
-                  ? activeJob.frames.toLocaleString()
-                  : "—"}
-              </span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 block">Customers Detected</span>
-              <span className="font-semibold text-slate-900 tabular-nums">
-                {activeResults?.customersDetected != null
-                  ? activeResults.customersDetected.toLocaleString()
-                  : activeJob?.customersDetected != null && activeJob.customersDetected > 0
-                  ? activeJob.customersDetected.toLocaleString()
-                  : "—"}
-              </span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 block">Peak Customer Count</span>
-              <span className="font-semibold text-emerald-800 tabular-nums">
-                {activeResults?.peakCount != null ? `${activeResults.peakCount} shoppers` : "—"}
-              </span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 block">Average Dwell</span>
-              <span className="font-semibold text-slate-900 tabular-nums">
-                {activeResults?.averageDwellSeconds != null
-                  ? `${Math.round(activeResults.averageDwellSeconds / 60)} min (${activeResults.averageDwellSeconds}s)`
-                  : "—"}
-              </span>
-            </div>
+            {isSelectedFileImage && imageResult ? (
+              <>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Total Detections</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">
+                    {imageResult.totalDetections}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Unique Classes</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">
+                    {Object.keys(imageResult.detectionCounts).length}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Image Dimensions</span>
+                  <span className="font-semibold text-emerald-800 tabular-nums">
+                    {imageResult.width} × {imageResult.height}px
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Model Checkpoint</span>
+                  <span className="font-semibold text-slate-900 font-mono text-[11px]">
+                    {imageResult.modelUsed}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Total Frames</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">
+                    {activeResults?.totalFrames != null
+                      ? activeResults.totalFrames.toLocaleString()
+                      : activeJob?.frames != null && activeJob.frames > 0
+                      ? activeJob.frames.toLocaleString()
+                      : "—"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Customers Detected</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">
+                    {activeResults?.customersDetected != null
+                      ? activeResults.customersDetected.toLocaleString()
+                      : activeJob?.customersDetected != null && activeJob.customersDetected > 0
+                      ? activeJob.customersDetected.toLocaleString()
+                      : "—"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Peak Customer Count</span>
+                  <span className="font-semibold text-emerald-800 tabular-nums">
+                    {activeResults?.peakCount != null ? `${activeResults.peakCount} shoppers` : "—"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Average Dwell</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">
+                    {activeResults?.averageDwellSeconds != null
+                      ? `${Math.round(activeResults.averageDwellSeconds / 60)} min (${activeResults.averageDwellSeconds}s)`
+                      : "—"}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </section>
 
@@ -437,12 +584,12 @@ export default function VideoAnalyticsPage() {
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-[#eeefec]">
               <h2 className="font-heading text-sm font-bold text-slate-900">
-                FastAPI Video Ingestion
+                {isSelectedFileImage ? "FastAPI Image Ingestion" : "FastAPI Video Ingestion"}
               </h2>
               <span className="text-[10px] font-mono text-slate-400">Max 200MB</span>
             </div>
 
-            {/* Video Upload Dropzone */}
+            {/* Upload Dropzone */}
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -462,27 +609,36 @@ export default function VideoAnalyticsPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".mp4,.webm,.mov,.avi,.png,.jpg,.jpeg"
+                accept=".mp4,.webm,.mov,.avi,.jpg,.jpeg,.png,.webp"
                 onChange={handleFileChange}
                 className="sr-only"
                 id="video-upload-input"
-                aria-label="Upload video file"
+                aria-label="Upload video or image file"
               />
 
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#f2f3ef] text-emerald-800 mb-2">
-                <MaterialIcon name="upload" className="h-4 w-4" aria-hidden="true" />
+                <MaterialIcon
+                  name={isSelectedFileImage ? "image" : "upload"}
+                  className="h-4 w-4"
+                  aria-hidden="true"
+                />
               </div>
               <p className="text-xs font-bold text-slate-900">
-                {selectedFile ? selectedFile.name : "Drop video or browse file"}
+                {selectedFile
+                  ? selectedFile.name
+                  : "Drop video or shelf image"}
               </p>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                MP4, WebM, MOV, or AVI up to 200MB
+                MP4, WebM, MOV, AVI, JPG, PNG, or WEBP up to 200MB
               </p>
 
               {selectedFile && (
                 <div className="mt-2 inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-900 tabular-nums">
                   <MaterialIcon name="check" className="h-3 w-3" aria-hidden="true" />
-                  <span>{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB ready</span>
+                  <span>
+                    {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB ready (
+                    {isSelectedFileImage ? "Image" : "Video"})
+                  </span>
                 </div>
               )}
             </div>
@@ -508,12 +664,21 @@ export default function VideoAnalyticsPage() {
                 {isUploading ? (
                   <>
                     <MaterialIcon name="refresh" className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    <span>Uploading to FastAPI...</span>
+                    <span>
+                      {isSelectedFileImage
+                        ? "Running YOLO Inference..."
+                        : "Uploading to FastAPI..."}
+                    </span>
                   </>
                 ) : isCurrentlyProcessing ? (
                   <>
                     <MaterialIcon name="refresh" className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                     <span>Processing on Backend...</span>
+                  </>
+                ) : isSelectedFileImage ? (
+                  <>
+                    <MaterialIcon name="center_focus_strong" className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Analyze Image with YOLO</span>
                   </>
                 ) : (
                   <>
@@ -530,11 +695,19 @@ export default function VideoAnalyticsPage() {
             <div className="flex items-center justify-between font-bold text-slate-900">
               <span>FastAPI CV Integration</span>
               <span className="text-emerald-800 font-mono text-[10px]">
-                {activeJob?.status === "done" ? "Results Ready" : isCurrentlyProcessing ? "Processing" : "Ready"}
+                {isSelectedFileImage && imageResult
+                  ? "Detection Complete"
+                  : activeJob?.status === "done"
+                  ? "Results Ready"
+                  : isCurrentlyProcessing
+                  ? "Processing"
+                  : "Ready"}
               </span>
             </div>
             <p className="leading-snug text-slate-500">
-              Dispatches binary video payloads using FormData to <code className="font-mono text-slate-700">POST /api/v1/videos</code>. Detections reflect actual backend inference.
+              {isSelectedFileImage
+                ? "Synchronous inference via POST /api/v1/images/detect with OpenCV bounding box visualization."
+                : "Dispatches binary video payloads using FormData to POST /api/v1/videos with ByteTrack tracking."}
             </p>
           </div>
         </section>

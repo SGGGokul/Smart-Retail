@@ -40,3 +40,37 @@ export interface VideoResultsResponse {
   averageDwellSeconds: number;
   detections: VideoDetectionBox[];
 }
+
+export interface ImageBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ImageDetectionBox {
+  id: string;
+  classId: number;
+  label: string;
+  confidence: number;
+  box: ImageBox;
+}
+
+export interface ImageDetectionResponse {
+  filename: string;
+  width: number;
+  height: number;
+  totalDetections: number;
+  detections: ImageDetectionBox[];
+  detectionCounts: Record<string, number>;
+  annotatedImage: string | null;
+  modelUsed: string;
+  isCocoGeneralModel: boolean;
+  shelfDetectionSupported: boolean;
+  note: string;
+}
+

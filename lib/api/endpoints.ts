@@ -13,6 +13,10 @@ export const ENDPOINTS = {
 
   // Shelf Monitoring
   SHELVES: "/api/v1/shelves",
+  SHELVES_DETECT: "/api/v1/shelves/detect",
+
+  // Image Detection
+  IMAGES_DETECT: "/api/v1/images/detect",
 
   // Alerts
   ALERTS: "/api/v1/alerts",
