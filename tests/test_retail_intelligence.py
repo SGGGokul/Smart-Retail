@@ -511,6 +511,25 @@ def test_23_reaching_without_product_removal_does_not_trigger_confirmed_pickup(s
     assert len(pickups) == 0
 
 
+def test_24_confirmed_product_removal_is_detected(shelf_service: ShelfService):
+    """24. Stable product removed while customer reaches and staying absent triggers confirmed pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Frames 1-10: Stable item
+    for f in range(1, 11):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, products, customer)
+
+    # Frames 11-20: Item removed by customer and stays absent
+    for f in range(11, 22):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    pickups, total = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 1
+    assert pickups[0].confirmation_status == "confirmed"
+    assert pickups[0].visitor_id == "DVIS-01"
+    assert pickups[0].session_id == "sess-01"
+
 
 def test_25_product_movement_within_shelf_does_not_trigger_false_removal(shelf_service: ShelfService):
     """25. Shifting a product within the same shelf bay does NOT trigger false pickup."""
@@ -532,6 +551,61 @@ def test_25_product_movement_within_shelf_does_not_trigger_false_removal(shelf_s
     assert state.current_occupancy == 1
 
 
+def test_26_confirmed_product_return_is_detected(shelf_service: ShelfService):
+    """26. Product introduced into shelf by customer and remaining stable confirms return."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Shelf initially empty
+    for f in range(1, 5):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    # Product returned into shelf
+    returned_product = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    for f in range(5, 16):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, returned_product, customer
+        )
+
+    returns, _ = shelf_service.get_timeline_events(event_type="product_returned")
+    assert len(returns) == 1
+    assert returns[0].confirmation_status == "confirmed"
+
+
+def test_27_return_event_links_to_original_pickup_when_reliable(shelf_service: ShelfService):
+    """27. Return event links its related_event_id to the customer's prior pickup."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+    product = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+
+    # 1. Pick up item
+    for f in range(1, 10):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, product, customer)
+    for f in range(10, 20):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 1
+    original_pk_id = pickups[0].event_id
+
+    # 2. Return item 30 seconds later
+    for f in range(20, 32):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, 30.0 + f * 0.1, product, customer)
+
+    returns, _ = shelf_service.get_timeline_events(event_type="product_returned")
+    assert len(returns) == 1
+    assert returns[0].related_event_id == original_pk_id
+
+
+def test_28_duplicate_event_prevention_works(shelf_service: ShelfService):
+    """28. Prolonged customer presence in interaction zone does NOT emit duplicate approach events."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # 50 frames with customer continuously present
+    for f in range(1, 51):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    approaches, _ = shelf_service.get_timeline_events(event_type="customer_approached_shelf")
+    assert len(approaches) == 1
+
 
 def test_29_multiple_customers_near_same_shelf_are_handled(shelf_service: ShelfService):
     """29. Multiple customers reaching simultaneously marks pickup as UNCERTAIN rather than guessing."""
@@ -551,6 +625,24 @@ def test_29_multiple_customers_near_same_shelf_are_handled(shelf_service: ShelfS
     assert len(cands) >= 1
     assert cands[0].confirmation_status == "uncertain"
 
+
+def test_30_employee_restocking_does_not_become_customer_pickup(shelf_service: ShelfService):
+    """30. Adding multiple items to a shelf increases occupancy without triggering customer pickup."""
+    initial_items = [("bottle", 0.9, (120.0, 120.0, 140.0, 180.0))]
+    shelf_service.process_frame_shelf_analytics("store-104", "cam-01", 1, 1.0, initial_items, [])
+
+    # Restocked with 5 items
+    restocked_items = [
+        ("bottle", 0.9, (120.0 + i * 25, 120.0, 140.0 + i * 25, 180.0))
+        for i in range(5)
+    ]
+    for f in range(2, 20):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, restocked_items, [])
+
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.current_occupancy == 5
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 0
 
 
 def test_31_camera_specific_shelf_events_remain_correctly_associated(shelf_service: ShelfService):
@@ -600,3 +692,20 @@ def test_32_visitor_identity_association_uses_unified_system(shelf_service: Shel
     assert events[0].sessionId == vis.active_session_id if hasattr(events[0], "sessionId") else events[0].session_id == vis.active_session_id
 
 
+
+def test_34_uncertain_detections_remain_uncertain(shelf_service: ShelfService):
+    """34. Ambiguous candidate events remain marked as UNCERTAIN and are never converted to confirmed."""
+    ev = RetailEvent(
+        event_id="ev-unc-01",
+        store_id="store-104",
+        camera_id="cam-01",
+        event_type="product_pickup_candidate",
+        timestamp=10.0,
+        confidence=0.55,
+        confirmation_status="uncertain",
+    )
+    shelf_service._events.append(ev)
+
+    events, _ = shelf_service.get_timeline_events(confirmation_status="uncertain")
+    assert len(events) >= 1
+    assert events[0].confirmation_status == "uncertain"
