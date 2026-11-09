@@ -220,6 +220,132 @@ def test_7_different_person_receives_different_identity(identity_service: Identi
     assert vis2.anonymous_label == "VIS-0002"
 
 
+def test_8_three_cameras_matching_one_person_produce_one_visitor(identity_service: IdentityService):
+    """8. Observations across 3 distinct cameras matching the same person produce 1 unique visitor."""
+    emb = identity_service.create_synthetic_embedding(seed=777, camera_id="cam-front", timestamp=10.0)
+
+    # Cam 1: Entrance
+    v1, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-front", tracker_id=10, timestamp=10.0, embedding=emb
+    )
+    # Cam 2: Aisle (30s later)
+    v2, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-aisle1", tracker_id=22, timestamp=40.0, embedding=emb
+    )
+    # Cam 3: Checkout (120s later)
+    v3, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-checkout", tracker_id=33, timestamp=160.0, embedding=emb
+    )
+
+    assert v1.visitor_id == v2.visitor_id == v3.visitor_id
+    all_visitors = identity_service.list_daily_visitors("store-104", "2026-11-09")
+    assert len(all_visitors) == 1
+    assert all_visitors[0].cameras_seen == {"cam-front", "cam-aisle1", "cam-checkout"}
+
+
+def test_9_different_people_on_separate_cameras_remain_separate(identity_service: IdentityService):
+    """9. Different people on separate cameras remain strictly separate."""
+    emb_a = identity_service.create_synthetic_embedding(seed=12, camera_id="cam-01")
+    emb_b = identity_service.create_synthetic_embedding(seed=88, camera_id="cam-02")
+
+    va, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=5, timestamp=10.0, embedding=emb_a
+    )
+    vb, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-02", tracker_id=5, timestamp=10.0, embedding=emb_b
+    )
+
+    assert va.visitor_id != vb.visitor_id
+    assert len(identity_service.list_daily_visitors("store-104", "2026-11-09")) == 2
+
+
+def test_10_camera_tracker_id_collisions_do_not_merge_people(identity_service: IdentityService):
+    """10. Two different cameras using tracker_id=1 simultaneously do NOT merge identities."""
+    emb_x = identity_service.create_synthetic_embedding(seed=101, camera_id="cam-left")
+    emb_y = identity_service.create_synthetic_embedding(seed=202, camera_id="cam-right")
+
+    vx, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-left", tracker_id=1, timestamp=5.0, embedding=emb_x
+    )
+    vy, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-right", tracker_id=1, timestamp=5.0, embedding=emb_y
+    )
+
+    assert vx.visitor_id != vy.visitor_id
+
+
+def test_11_overlapping_cameras_do_not_double_count_confidently_matched_person(identity_service: IdentityService):
+    """11. Overlapping camera views observing the same person simultaneously do NOT double-count visitors."""
+    identity_service.register_overlapping_cameras("cam-wide-1", "cam-wide-2")
+    emb = identity_service.create_synthetic_embedding(seed=303, camera_id="cam-wide-1")
+
+    # Cam A sees person
+    va, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-wide-1", tracker_id=7, timestamp=10.0, embedding=emb
+    )
+    # Cam B (overlapping view) sees same person at same time
+    vb, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-wide-2", tracker_id=9, timestamp=10.1, embedding=emb
+    )
+
+    assert va.visitor_id == vb.visitor_id
+    assert len(identity_service.list_daily_visitors("store-104", "2026-11-09")) == 1
+
+
+def test_12_ambiguous_matches_do_not_cause_automatic_identity_merges(identity_service: IdentityService):
+    """12. Ambiguous Re-ID matches remain provisional/uncertain and do NOT silently merge."""
+    rng = np.random.RandomState(42)
+    base = rng.randn(128).astype(np.float32)
+    base /= np.linalg.norm(base)
+
+    p1 = rng.randn(128).astype(np.float32)
+    p1 -= np.dot(p1, base) * base
+    p1 /= np.linalg.norm(p1)
+
+    p2 = rng.randn(128).astype(np.float32)
+    p2 -= np.dot(p2, base) * base
+    p2 -= np.dot(p2, p1) * p1
+    p2 /= np.linalg.norm(p2)
+
+    v1 = 0.9 * base + 0.436 * p1
+    v1 /= np.linalg.norm(v1)
+
+    v2 = 0.9 * base + 0.436 * p2
+    v2 /= np.linalg.norm(v2)
+
+    emb1 = AppearanceEmbedding(vector=v1, created_at=1.0, camera_id="cam-01")
+    emb2 = AppearanceEmbedding(vector=v2, created_at=1.0, camera_id="cam-01")
+    emb_amb = AppearanceEmbedding(vector=base, created_at=10.0, camera_id="cam-02")
+
+    vis1, _, _ = identity_service.resolve_or_create_daily_visitor("store-104", "2026-11-09", "cam-01", 1, 1.0, emb1)
+    vis2, _, _ = identity_service.resolve_or_create_daily_visitor("store-104", "2026-11-09", "cam-01", 2, 1.0, emb2)
+    assert vis1.visitor_id != vis2.visitor_id
+
+    vis_amb, _, status = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-02", 3, 10.0, emb_amb
+    )
+
+    # Must NOT merge with either visitor 1 or 2; stays isolated with UNCERTAIN status
+    assert status == ConfirmationStatus.UNCERTAIN
+    assert vis_amb.anonymous_label == "VIS-0003"
+
+
+def test_13_camera_transitions_preserve_identity_when_confidently_matched(identity_service: IdentityService):
+    """13. Realistic movement from entrance to aisle preserves visitor identity."""
+    emb = identity_service.create_synthetic_embedding(seed=555, camera_id="cam-entrance")
+
+    # Entrance camera at t=0s
+    v_ent, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-entrance", 10, 0.0, emb
+    )
+    # Aisle camera at t=15s
+    v_aisle, _, status = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-aisle", 25, 15.0, emb
+    )
+
+    assert v_ent.visitor_id == v_aisle.visitor_id
+    assert status == ConfirmationStatus.CONFIRMED
+
 
 def test_14_new_local_calendar_days_create_new_identities(identity_service: IdentityService):
     """14. The same physical customer returning the next day receives a NEW daily visitor identity."""
