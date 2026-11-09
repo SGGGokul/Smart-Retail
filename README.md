@@ -34,6 +34,10 @@ RetailIQ is an enterprise-grade smart retail intelligence platform that unifies 
 - [Customer Counting & Journey Tracking](#customer-counting--journey-tracking)
 - [Database & Persistence](#database--persistence)
 - [AI Assistant & Hybrid RAG](#ai-assistant--hybrid-rag)
+- [CI/CD Automation & YOLO11n MLOps Platform](#cicd-automation--yolo11n-mlops-platform)
+  - [CI/CD Pipeline Architecture](#cicd-pipeline-architecture)
+  - [YOLO11n MLOps Lifecycle](#yolo11n-mlops-lifecycle)
+  - [MLOps CLI & Reproduction Commands](#mlops-cli--reproduction-commands)
 - [Testing Instructions](#testing-instructions)
 - [Troubleshooting](#troubleshooting)
 - [Current Limitations](#current-limitations)
@@ -442,6 +446,90 @@ The RetailIQ AI Assistant (`POST /api/v1/assistant/chat`) routes queries intelli
    - Strips zero-width invisible characters and mathematical alphanumeric Unicode symbols.
    - Detects prompt injection attempts (e.g., *"ignore previous instructions"*).
    - Redacts exposed API keys and strips executable HTML/JavaScript from model outputs.
+
+---
+
+## CI/CD Automation & YOLO11n MLOps Platform
+
+RetailIQ incorporates enterprise-grade CI/CD automation and an end-to-end MLOps platform tailored for YOLO11n object detection models.
+
+### CI/CD Pipeline Architecture
+
+All pull requests and commits to `main` trigger parallelized GitHub Actions workflows orchestrating testing, database migrations, container builds, security audits, container registry releases, and automated deployment verification:
+
+```mermaid
+flowchart TD
+    PushPR["Git Push / Pull Request to main"] --> CI["ci.yml (Orchestrator)"]
+
+    subgraph ParallelValidation ["Parallel CI Matrix"]
+        CI --> B_CI["backend-tests.yml<br>(Python 3.11, Lint, Pytest)"]
+        CI --> F_CI["frontend-tests.yml<br>(Node 20, tsc, Unit Tests, Build)"]
+        CI --> DB_CI["database-integration.yml<br>(PostgreSQL 17 pgvector, Redis 7, Alembic)"]
+        CI --> DOCK_CI["docker-build.yml<br>(BuildKit, Layer Cache, Compose Verify)"]
+        CI --> SEC_CI["security.yml<br>(TruffleHog, pip-audit, pnpm audit)"]
+        CI --> ML_CI["ml-validation.yml<br>(Dataset Check, MLOps Tests, Model Integrity)"]
+    end
+
+    B_CI & F_CI & DB_CI & DOCK_CI & SEC_CI & ML_CI --> GatesPassed{"All CI Jobs Pass?"}
+    GatesPassed -->|Yes on main| Release["release.yml<br>(GHCR Container Images, SemVer Tagging)"]
+    Release --> Deploy["deploy.yml<br>(Reusable CD Workflow, /api/v1/health Verification)"]
+    Deploy --> HealthCheck{"Health Verified?"}
+    HealthCheck -->|Failure| Rollback["Automatic Rollback Triggered"]
+    HealthCheck -->|Success| Deployed["Production Live"]
+    GatesPassed -->|No| BlockMerge["Block PR Merge / Alert"]
+```
+
+### YOLO11n MLOps Lifecycle
+
+The MLOps platform manages the full lifecycle of custom YOLO retail detection models with strict quality gates:
+
+```mermaid
+flowchart LR
+    Dataset["Dataset<br>(retail_dataset.yaml)"] --> Validator["DatasetValidator<br>(BBox Bounds [0,1], Classes, Leakage Check)"]
+    Validator --> Versioner["DatasetVersioner<br>(Deterministic SHA256 Manifest)"]
+    Versioner --> Training["YOLOTrainingPipeline<br>(Deterministic Seeds, Config Validation)"]
+    Training --> Tracker["ExperimentTracker<br>(Metrics: mAP50, Loss, Latency)"]
+    Tracker --> Evaluator["ModelEvaluator<br>(Validation Set Metrics & Benchmarks)"]
+    Evaluator --> Gate["PromotionGate<br>(mAP Drop=0, Class Regr <= 2%, Latency <= 35ms)"]
+    Gate -->|Approved| Registry["ModelRegistry<br>(candidate -> staging -> production)"]
+    Registry --> Runtime["ModelService<br>(Checksum Validation, Dynamic Reload)"]
+    Runtime --> Monitor["DriftMonitor<br>(Confidence, Empty Detection, Latency, TVD)"]
+    Registry -.->|On Failure| RollbackModel["Atomic Model Rollback<br>(Previous Production Version)"]
+```
+
+1. **Dataset Validation & Versioning (`mlops/dataset/`):** Validates normalized bounding box constraints `[0, 1]`, class IDs, image-label pairing, and detects train/val/test data leakage. Generates deterministic SHA256 manifests.
+2. **Reproducible Training Pipeline (`mlops/training/`):** Deterministic random seeds across Python, NumPy, and PyTorch. Configurable hyperparameters and automated artifact manifests (`training_manifest.json`).
+3. **Experiment Tracking & Evaluation (`mlops/tracking/`, `mlops/evaluation/`):** Logs metrics across runs and generates standardized evaluation reports with per-class breakdowns and latency benchmarks.
+4. **Promotion Gates & Model Registry (`mlops/registry/`, `mlops/evaluation/promotion_gate.py`):**
+   - Automatically validates candidate models against production baselines.
+   - Enforces zero mAP regression and a strict $\le 2\%$ tolerance ceiling for critical retail classes (`person`, `shelf`, `product`).
+   - Maintains versioned checkpoints with SHA256 checksums and supports atomic production rollback.
+5. **Runtime Inference Integration (`app/services/model_service.py`):**
+   - Lazily loads approved production models from the registry.
+   - Validates physical file checksum integrity before loading.
+   - Exposes active model version metadata via `GET /api/v1/model/info` and dynamic reloading via `POST /api/v1/model/reload`.
+6. **Continuous Monitoring & Drift Reporting (`mlops/monitoring/`):** Tracks rolling latency, confidence distributions, empty detection rates, and Total Variation Distance (TVD) for class frequency shifts.
+
+### MLOps CLI & Reproduction Commands
+
+```powershell
+# 1. Run all MLOps test suites (Dataset, Training, Tracking, Registry, Monitoring, Model Service)
+python -m pytest tests/ -k "mlops or model_inference" -v
+
+# 2. Run dataset validation and generate version manifest
+python -c "
+from mlops.dataset.validator import DatasetValidator
+from mlops.dataset.versioning import DatasetVersioner
+validator = DatasetValidator('mlops/dataset/retail_dataset.yaml')
+print('Classes:', validator.classes)
+"
+
+# 3. Launch reproducible YOLO11n training (dry-run for local validation)
+python mlops/training/train.py --data mlops/dataset/retail_dataset.yaml --epochs 5 --imgsz 640 --batch 8 --dry-run
+
+# 4. Check active production model info via API
+curl http://127.0.0.1:8000/api/v1/model/info
+```
 
 ---
 
