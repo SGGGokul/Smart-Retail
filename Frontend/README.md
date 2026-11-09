@@ -76,6 +76,21 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
+## Key Intelligence Views
+
+### 1. Customer Analytics & Footfall Intelligence (`/customer-analytics`)
+- **4-Level Pipeline Visualizer:** Visualizes detections -> camera tracks -> daily visitors -> visit sessions.
+- **Store-Day Unique Visitors:** Distinguishes repeated detections from unique individuals based on store-local midnight reset.
+- **Returning Visitor Counter:** Tracks customers who exit and re-enter the same day with incremented visit numbers.
+- **Multi-Camera Ingress:** Displays real-time footfall breakdown by camera stream.
+
+### 2. Shelf Monitoring & Retail Events Timeline (`/shelf-monitoring`)
+- **8 KPI Health Cards:** Overall fill rate, critical restock count (<40%), low stock warning (40-70%), optimal fill (>70%), empty position count, customer interactions, pickup candidates/confirmed, and return candidates/confirmed.
+- **Bays vs. Timeline Switcher:** Toggle seamlessly between 3-tier visual shelf bay schematics and the unified chronological retail events timeline.
+- **Temporal Event Inspector:** Filter events by type (pickups, returns, interactions) and confirmation status (`confirmed`, `candidate`, `uncertain`), displaying exact timestamps, visitor identifiers (`DVIS-...`), confidence percentages, and vision evidence.
+
+---
+
 ## Monorepo Reference
 
 For backend architecture, computer vision models, database setup, and Docker Compose orchestration, refer to the [Root README.md](../README.md).
