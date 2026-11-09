@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+test-results/
 
 # Virtual environment
 .venv/
@@ -16,22 +17,36 @@ venv/
 # Environment variables
 .env
 .env.local
+.env.*.local
+Frontend/.env*.local
 
 # Data & Uploads
 data/videos/
 data/images/
 data/uploads/
 data/external/
-test-results/
 
 # Model files
 models/*.pt
 models/*.onnx
 
-# IDE
-.vscode/
+# Node / Next.js / Frontend
+node_modules/
+Frontend/node_modules/
+.next/
+Frontend/.next/
+Frontend/reports/
+Frontend/coverage/
+Frontend/playwright-report/
+Frontend/test-results/
+*.tsbuildinfo
 
-# OS
+# Graphify & Knowledge Graph
+graphify-out/
+.graphifyignore
+
+# IDE & OS
+.vscode/
 .DS_Store
 Thumbs.db
 generate_merl_sample_frames.py

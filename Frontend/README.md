@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RetailIQ — Frontend Web Application
+
+The RetailIQ frontend is a Next.js 16 web dashboard for store managers, operators, and analysts. It connects to the FastAPI backend to display real-time store traffic, shelf occupancy, queue metrics, image/video computer vision results, and an operations AI copilot.
+
+---
+
+## Tech Stack
+
+- **Framework:** [Next.js 16.4.2](https://nextjs.org/) (App Router, Webpack/Turbopack enabled)
+- **UI & State:** React 19.3.0, React DOM 19.3.0
+- **Styling:** [Tailwind CSS v4](https://tailwindcss.com/)
+- **Charts:** [Recharts 3.10.1](https://recharts.org/)
+- **Icons:** [Lucide React](https://lucide.dev/)
+- **Testing:** Playwright 1.64.1 (E2E), Node.js native test runner
+
+---
+
+## Directory Overview
+
+```text
+Frontend/
+├── app/                           # App Router routes and page layouts
+│   ├── page.tsx                   # Store Overview Dashboard
+│   ├── video-analytics/           # Dedicated Image & Video Upload Analytics
+│   ├── shelf-monitoring/          # Shelf Bays, Stock Percentages, Restock Alert
+│   ├── customer-analytics/        # Visitor Footfall, Dwell Times, Queue Lengths
+│   ├── ai-assistant/              # Copilot Chat with Citations and Chips
+│   ├── alerts/                    # Store Incidents & Notifications
+│   ├── reports/                   # Daily/Weekly Analytics Reports
+│   └── settings/                  # Thresholds, Cameras, and Profile
+├── components/                    # Reusable UI widgets, layout, and charts
+├── lib/                           # API client (lib/api/client.ts) & endpoints
+├── public/                        # Static SVG assets
+├── types/                         # TypeScript interfaces conforming to API_CONTRACT.md
+├── e2e/                           # Playwright end-to-end test specs
+├── package.json                   # Dependencies and scripts
+└── tsconfig.json                  # TypeScript compiler settings
+```
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### 1. Install Dependencies
+From within the `Frontend/` folder, run:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install --frozen-lockfile
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Environment Configuration
+By default, the frontend connects to the FastAPI backend at `http://localhost:8000`. To override this, create `.env.local` inside `Frontend/`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```env
+NEXT_PUBLIC_API_BASE_URL="http://localhost:8000"
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 3. Start Development Server
+```bash
+pnpm run dev --port 3000
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## Available Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Command | Description |
+| :--- | :--- |
+| `pnpm run dev` | Starts the Next.js development server on port 3000. |
+| `pnpm run build` | Compiles an optimized production build (`next build --webpack`). |
+| `pnpm run start` | Runs the compiled production server. |
+| `pnpm exec tsc --noEmit` | Validates TypeScript types across all components. |
+| `pnpm run test` | Executes native Node.js unit tests in `test/`. |
+| `pnpm run test:e2e` | Runs Playwright end-to-end tests in `e2e/`. |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## Monorepo Reference
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For backend architecture, computer vision models, database setup, and Docker Compose orchestration, refer to the [Root README.md](../README.md).

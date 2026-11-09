@@ -38,7 +38,7 @@ services:
 
   backend:
     build:
-      context: ./Backend
+      context: .
       dockerfile: Dockerfile
     container_name: retailiq-backend
     restart: unless-stopped
@@ -57,19 +57,19 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./Backend/data:/app/data
+      - ./data:/app/data
       - model_cache:/root/.cache
     networks:
       - retailiq_net
 
   frontend:
     build:
-      context: .
+      context: ./Frontend
       dockerfile: Dockerfile
     container_name: retailiq-frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:

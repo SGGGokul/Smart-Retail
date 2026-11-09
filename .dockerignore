@@ -5,3 +5,9 @@ __pycache__
 .coverage
 data/uploads/*
 !data/uploads/.gitkeep
+data/external
+Frontend
+node_modules
+.git
+.github
+test-results
