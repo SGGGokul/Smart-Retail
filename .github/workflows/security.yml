@@ -20,8 +20,8 @@ jobs:
         run: |
           echo "Scanning working tree for accidental credentials or hardcoded keys..."
           # Reject committed private keys or unredacted API tokens
-          ! grep -rn "sk_live_" . --exclude-dir={.git,.venv,node_modules,brain} || exit 1
-          ! grep -rn "-----BEGIN PRIVATE KEY-----" . --exclude-dir={.git,.venv,node_modules,brain} || exit 1
+          ! grep -rn "sk_live_" . --exclude-dir={.git,.venv,node_modules,brain,.github} || exit 1
+          ! grep -rn "-----BEGIN PRIVATE KEY-----" . --exclude-dir={.git,.venv,node_modules,brain,.github} || exit 1
           echo "Secret scan passed: zero leaked private keys or live API tokens detected."
 
       - name: Set up Python 3.11
