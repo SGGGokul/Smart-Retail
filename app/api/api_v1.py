@@ -7,6 +7,7 @@ from app.api.customer_journey import router as customer_journey_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.images import router as images_router
+from app.api.model import router as model_router
 from app.api.shelves import router as shelves_router
 from app.api.videos import router as videos_router
 
@@ -24,3 +25,4 @@ api_v1_router.include_router(alerts_router, prefix="/alerts", tags=["Alerts"])
 api_v1_router.include_router(videos_router, prefix="/videos", tags=["Videos"])
 api_v1_router.include_router(assistant_router, prefix="/assistant", tags=["Assistant"])
 api_v1_router.include_router(images_router, prefix="/images", tags=["Images"])
+api_v1_router.include_router(model_router, prefix="/model", tags=["Model"])

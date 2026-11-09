@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Model configuration
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     MODEL_PATH: Path = BASE_DIR / "yolo11n.pt"
+    MODEL_DEVICE: str = "cpu"
+    MODEL_REGISTRY_DIR: Path = BASE_DIR / "mlops" / "artifacts" / "registry"
+    MODEL_USE_REGISTRY: bool = True
     UPLOAD_DIR: Path = BASE_DIR / "data" / "uploads"
 
     # Computer Vision parameters (reused from existing scripts)

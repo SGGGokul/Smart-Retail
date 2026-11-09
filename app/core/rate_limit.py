@@ -268,7 +268,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Bypass internal health check and documentation endpoints from throttling
         path = request.url.path
-        if path in {"/health", "/docs", "/redoc", "/openapi.json"}:
+        if path in {"/health", "/api/v1/health", "/docs", "/redoc", "/openapi.json"}:
             return await call_next(request)
 
         client_id = self.limiter.extract_client_identifier(request)
