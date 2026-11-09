@@ -420,3 +420,44 @@ def test_17_concurrent_processing_cannot_create_duplicate_daily_visitors(identit
 # SHELF TESTS (18 to 34)
 # ==============================================================================
 
+def test_18_shelf_zone_detection(shelf_service: ShelfService):
+    """18. Points inside the configured shelf polygon are identified correctly."""
+    bay = shelf_service.get_shelf_state("store-104", "shelf-aisle-1").bay
+    # Center (200, 175) is inside [(100, 100), (300, 100), (300, 250), (100, 250)]
+    assert bay.contains_point(200.0, 175.0) is True
+    # Outside point (50, 50)
+    assert bay.contains_point(50.0, 50.0) is False
+
+
+def test_19_shelf_occupancy_calculation(shelf_service: ShelfService):
+    """19. Detects products inside shelf zone and computes occupancy and fill percentage."""
+    # 5 bottles detected inside shelf
+    products = [
+        ("bottle", 0.9, (120.0 + i * 30, 120.0, 140.0 + i * 30, 180.0))
+        for i in range(5)
+    ]
+    shelf_service.process_frame_shelf_analytics(
+        "store-104", "cam-01", frame_idx=1, timestamp=1.0, detected_products=products, detected_persons=[]
+    )
+
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.current_occupancy == 5
+    # Capacity is 10, so fill percentage = 50%
+    assert state.fill_percentage == 50
+    assert state.status == "low"
+
+
+def test_20_empty_position_detection(shelf_service: ShelfService):
+    """20. Correctly computes empty shelf positions relative to configured capacity."""
+    # 2 bottles inside capacity 10 bay -> 8 empty slots
+    products = [
+        ("bottle", 0.9, (120.0, 120.0, 140.0, 180.0)),
+        ("bottle", 0.9, (160.0, 120.0, 180.0, 180.0)),
+    ]
+    shelf_service.process_frame_shelf_analytics(
+        "store-104", "cam-01", frame_idx=1, timestamp=1.0, detected_products=products, detected_persons=[]
+    )
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.empty_positions == 8
+
+
