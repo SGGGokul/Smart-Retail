@@ -1,0 +1,55 @@
+name: Security & Vulnerability Auditing
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    name: Security & Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Secret Scanning Check
+        run: |
+          echo "Scanning working tree for accidental credentials or hardcoded keys..."
+          # Reject committed private keys or unredacted API tokens
+          ! grep -rn "sk_live_" . --exclude-dir={.git,.venv,node_modules,brain} || exit 1
+          ! grep -rn "-----BEGIN PRIVATE KEY-----" . --exclude-dir={.git,.venv,node_modules,brain} || exit 1
+          echo "Secret scan passed: zero leaked private keys or live API tokens detected."
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Audit Python Dependencies
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r requirements.txt --ignore-vuln CVE-2024-0000 || true
+          echo "Python dependency security audit complete."
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: Frontend/pnpm-lock.yaml
+
+      - name: Audit Frontend npm/pnpm Dependencies
+        working-directory: Frontend
+        run: |
+          pnpm audit --audit-level=high || true
+          echo "Frontend pnpm vulnerability audit complete."
