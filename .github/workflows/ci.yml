@@ -1,0 +1,21 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-ci:
+    name: Backend Validation
+    uses: ./.github/workflows/backend-tests.yml
+
+  frontend-ci:
+    name: Frontend Validation
+    uses: ./.github/workflows/frontend-tests.yml
