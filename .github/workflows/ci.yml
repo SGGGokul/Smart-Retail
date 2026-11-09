@@ -19,3 +19,11 @@ jobs:
   frontend-ci:
     name: Frontend Validation
     uses: ./.github/workflows/frontend-tests.yml
+
+  database-ci:
+    name: Database & Cache Integration
+    uses: ./.github/workflows/database-integration.yml
+
+  docker-ci:
+    name: Docker Build Validation
+    uses: ./.github/workflows/docker-build.yml
