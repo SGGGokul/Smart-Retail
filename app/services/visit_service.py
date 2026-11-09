@@ -91,6 +91,8 @@ class CustomerVisit:
     visit_number: int = 1
     is_uncertain_match: bool = False
     journey_events: List[VisitEvent] = field(default_factory=list)
+    visitor_id: Optional[str] = None
+    local_date: Optional[str] = None
 
     @property
     def total_observed_dwell_seconds(self) -> float:
@@ -219,6 +221,21 @@ class VisitService:
 
                     # Create New Active Visit
                     visit_id = f"vis-{uuid.uuid4().hex[:8]}"
+
+                    # Integrate with store-day daily visitor identity lifecycle
+                    from app.services.identity_service import get_identity_service
+                    identity_svc = get_identity_service()
+                    local_date = identity_svc.get_store_local_date(self.store_id, timestamp=current_time)
+                    daily_vis, is_daily_return, _ = identity_svc.resolve_or_create_daily_visitor(
+                        store_id=self.store_id,
+                        local_date=local_date,
+                        camera_id=cam_id,
+                        tracker_id=t_id,
+                        timestamp=current_time,
+                        is_uncertain=is_uncertain_match,
+                    )
+                    identity_svc.bind_session_to_visitor(daily_vis, visit_id)
+
                     new_visit = CustomerVisit(
                         visit_id=visit_id,
                         customer_id=customer_id,
@@ -226,9 +243,11 @@ class VisitService:
                         entry_time=current_time,
                         last_seen_time=current_time,
                         status=VisitStatus.ACTIVE,
-                        is_repeat_visit=repeat,
+                        is_repeat_visit=repeat or is_daily_return,
                         visit_number=visit_num,
                         is_uncertain_match=is_uncertain_match,
+                        visitor_id=daily_vis.visitor_id,
+                        local_date=local_date,
                     )
                     new_visit.cameras_seen.add(cam_id)
 
@@ -263,6 +282,13 @@ class VisitService:
                     visit.exit_time = current_time
                     visit.last_seen_time = current_time
                     visit.duration_seconds = max(0.0, current_time - visit.entry_time)
+
+                    if visit.visitor_id and visit.local_date:
+                        from app.services.identity_service import get_identity_service
+                        identity_svc = get_identity_service()
+                        daily_vis = identity_svc.get_visitor(visit.store_id, visit.local_date, visit.visitor_id)
+                        if daily_vis:
+                            identity_svc.close_visitor_session(daily_vis, visit.visit_id, visit.duration_seconds)
 
                     v_event = VisitEvent(
                         event_id=str(uuid.uuid4()),
@@ -657,6 +683,11 @@ class VisitService:
             self._customer_to_active_visit.clear()
             self._visits.clear()
             self._customer_history.clear()
+            try:
+                from app.services.identity_service import get_identity_service
+                get_identity_service().clear()
+            except Exception:
+                pass
 
 
 _visit_service: Optional[VisitService] = None
