@@ -480,6 +480,37 @@ def test_21_temporary_occlusion_does_not_trigger_false_pickup(shelf_service: She
     assert len(events) == 0
 
 
+def test_22_customer_proximity_alone_does_not_trigger_pickup(shelf_service: ShelfService):
+    """22. Customer approaching and standing near a shelf without touching items triggers NO pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    # Customer standing in interaction zone (60, 60, 90, 180)
+    customer = [(1, (60.0, 60.0, 90.0, 180.0), "DVIS-01", "sess-01")]
+
+    for f in range(1, 15):
+        events = shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, products, customer
+        )
+
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 0
+
+
+def test_23_reaching_without_product_removal_does_not_trigger_confirmed_pickup(shelf_service: ShelfService):
+    """23. Reaching into shelf without removing an item does NOT confirm a pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    # Customer reaching (bounding box penetrates shelf edge: 90 to 160)
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Present and stable for 15 frames
+    for f in range(1, 16):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, products, customer
+        )
+
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 0
+
+
 
 def test_25_product_movement_within_shelf_does_not_trigger_false_removal(shelf_service: ShelfService):
     """25. Shifting a product within the same shelf bay does NOT trigger false pickup."""
@@ -499,5 +530,73 @@ def test_25_product_movement_within_shelf_does_not_trigger_false_removal(shelf_s
 
     state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
     assert state.current_occupancy == 1
+
+
+
+def test_29_multiple_customers_near_same_shelf_are_handled(shelf_service: ShelfService):
+    """29. Multiple customers reaching simultaneously marks pickup as UNCERTAIN rather than guessing."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    # Customer 1 and Customer 2 both reaching
+    customers = [
+        (1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01"),
+        (2, (140.0, 100.0, 210.0, 240.0), "DVIS-02", "sess-02"),
+    ]
+
+    for f in range(1, 10):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, products, customers)
+    for f in range(10, 15):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customers)
+
+    cands, _ = shelf_service.get_timeline_events(event_type="product_pickup_candidate")
+    assert len(cands) >= 1
+    assert cands[0].confirmation_status == "uncertain"
+
+
+
+def test_31_camera_specific_shelf_events_remain_correctly_associated(shelf_service: ShelfService):
+    """31. Shelf events remain bound to their configured camera stream."""
+    bay2 = ShelfBay(
+        shelf_id="shelf-dairy-2",
+        store_id="store-104",
+        camera_id="cam-02",
+        name="Dairy Bay",
+        aisle="Aisle 2",
+        tier_count=3,
+        polygon=[(10.0, 10.0), (80.0, 10.0), (80.0, 80.0), (10.0, 80.0)],
+        configured_capacity=10,
+    )
+    shelf_service.register_shelf_bay(bay2)
+
+    # Process event on cam-02
+    shelf_service.process_frame_shelf_analytics(
+        "store-104", "cam-02", 1, 1.0, [], [(5, (10.0, 10.0, 40.0, 80.0), "DVIS-05", "sess-05")]
+    )
+
+    events_cam2, _ = shelf_service.get_timeline_events(camera_id="cam-02")
+    assert all(e.camera_id == "cam-02" for e in events_cam2)
+
+
+def test_32_visitor_identity_association_uses_unified_system(shelf_service: ShelfService, identity_service: IdentityService):
+    """32. Shelf interaction events correctly attach the store-day visitor ID from IdentityService."""
+    emb = identity_service.create_synthetic_embedding(seed=99)
+    vis, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=44, timestamp=1.0, embedding=emb
+    )
+    identity_service.bind_session_to_visitor(vis, "sess-u1")
+
+    # Person interacts with shelf
+    shelf_service.process_frame_shelf_analytics(
+        "store-104",
+        "cam-01",
+        frame_idx=1,
+        timestamp=2.0,
+        detected_products=[],
+        detected_persons=[(44, (90.0, 100.0, 160.0, 240.0), vis.visitor_id, vis.active_session_id)],
+    )
+
+    events, _ = shelf_service.get_timeline_events(visitor_id=vis.visitor_id)
+    assert len(events) >= 1
+    assert events[0].visitor_id == vis.visitor_id
+    assert events[0].sessionId == vis.active_session_id if hasattr(events[0], "sessionId") else events[0].session_id == vis.active_session_id
 
 
