@@ -29,17 +29,18 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
+          cache-dependency-path: requirements.txt
 
       - name: Audit Python Dependencies
         run: |
           python -m pip install --upgrade pip pip-audit
-          pip-audit -r requirements.txt --ignore-vuln CVE-2024-0000 || true
+          pip-audit -r requirements.txt
           echo "Python dependency security audit complete."
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.4
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
@@ -48,8 +49,12 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: Frontend/pnpm-lock.yaml
 
+      - name: Install Frontend Dependencies
+        working-directory: Frontend
+        run: pnpm install --frozen-lockfile
+
       - name: Audit Frontend npm/pnpm Dependencies
         working-directory: Frontend
         run: |
-          pnpm audit --audit-level=high || true
+          pnpm audit --audit-level=high
           echo "Frontend pnpm vulnerability audit complete."
