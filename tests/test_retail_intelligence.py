@@ -461,3 +461,43 @@ def test_20_empty_position_detection(shelf_service: ShelfService):
     assert state.empty_positions == 8
 
 
+def test_21_temporary_occlusion_does_not_trigger_false_pickup(shelf_service: ShelfService):
+    """21. A momentary 1-frame drop in object detection does NOT trigger a confirmed pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+
+    # Stable for 10 frames
+    for f in range(1, 11):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, products, [])
+
+    # Occluded for 1 frame
+    shelf_service.process_frame_shelf_analytics("store-104", "cam-01", 11, 1.1, [], [])
+
+    # Reappears
+    shelf_service.process_frame_shelf_analytics("store-104", "cam-01", 12, 1.2, products, [])
+
+    # No confirmed pickup should be emitted
+    events, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(events) == 0
+
+
+
+def test_25_product_movement_within_shelf_does_not_trigger_false_removal(shelf_service: ShelfService):
+    """25. Shifting a product within the same shelf bay does NOT trigger false pickup."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Initial position (150, 150)
+    for f in range(1, 10):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))], customer
+        )
+
+    # Shifted position still in shelf bay (180, 160)
+    for f in range(10, 20):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, [("bottle", 0.9, (180.0, 160.0, 200.0, 210.0))], customer
+        )
+
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.current_occupancy == 1
+
+
