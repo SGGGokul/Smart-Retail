@@ -31,3 +31,7 @@ jobs:
   security-ci:
     name: Security & Vulnerability Auditing
     uses: ./.github/workflows/security.yml
+
+  mlops-ci:
+    name: YOLO11n MLOps Validation
+    uses: ./.github/workflows/ml-validation.yml
