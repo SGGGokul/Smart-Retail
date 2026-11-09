@@ -4,6 +4,7 @@ from app.api.alerts import router as alerts_router
 from app.api.analytics import router as analytics_router
 from app.api.assistant import router as assistant_router
 from app.api.customer_journey import router as customer_journey_router
+from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.images import router as images_router
 from app.api.shelves import router as shelves_router
@@ -17,6 +18,7 @@ api_v1_router.include_router(health_router, prefix="", tags=["Health"])
 # Domain routers conforming to API_CONTRACT.md
 api_v1_router.include_router(analytics_router, prefix="/analytics", tags=["Analytics"])
 api_v1_router.include_router(customer_journey_router, prefix="/customer-journey", tags=["Customer Journey"])
+api_v1_router.include_router(events_router, prefix="/events", tags=["Events"])
 api_v1_router.include_router(shelves_router, prefix="/shelves", tags=["Shelves"])
 api_v1_router.include_router(alerts_router, prefix="/alerts", tags=["Alerts"])
 api_v1_router.include_router(videos_router, prefix="/videos", tags=["Videos"])

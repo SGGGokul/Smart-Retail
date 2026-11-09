@@ -14,12 +14,14 @@ import {
   getCustomerTraffic,
   getCustomerDwellTime,
   getCheckoutQueues,
+  getVisitorMetrics,
 } from "@/lib/api/customer-analytics";
 import { getDashboardSummary } from "@/lib/api/dashboard";
 import type {
   AnalyticsTrafficResponse,
   AnalyticsDwellResponse,
   AnalyticsQueuesResponse,
+  VisitorMetricsResponse,
   QueuePoint,
 } from "@/types/analytics";
 import type { AnalyticsSummaryResponse } from "@/types/dashboard";
@@ -44,17 +46,19 @@ export default function CustomerAnalyticsPage() {
   const [dwell, setDwell] = useState<AnalyticsDwellResponse | null>(null);
   const [queues, setQueues] = useState<AnalyticsQueuesResponse | null>(null);
   const [summary, setSummary] = useState<AnalyticsSummaryResponse | null>(null);
+  const [visitorMetrics, setVisitorMetrics] = useState<VisitorMetricsResponse | null>(null);
 
   const loadData = useCallback(async (range: TimeRange, signal?: AbortSignal) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const [trafficRes, dwellRes, queuesRes, summaryRes] = await Promise.allSettled([
+      const [trafficRes, dwellRes, queuesRes, summaryRes, visitorRes] = await Promise.allSettled([
         getCustomerTraffic(range, signal),
         getCustomerDwellTime(signal),
         getCheckoutQueues(signal),
         getDashboardSummary(signal),
+        getVisitorMetrics(signal),
       ]);
 
       if (signal?.aborted) return;
@@ -88,6 +92,10 @@ export default function CustomerAnalyticsPage() {
       } else {
         failures++;
         lastErrMsg = summaryRes.reason?.message || "Failed to load summary";
+      }
+
+      if (visitorRes.status === "fulfilled") {
+        setVisitorMetrics(visitorRes.value);
       }
 
       if (failures === 4) {
@@ -304,6 +312,127 @@ export default function CustomerAnalyticsPage() {
           </div>
         </section>
       )}
+
+
+      {/* Unified Identity Architecture & Daily Footfall Hierarchy */}
+      <section aria-label="Unified customer identity and visitor tracking" className="rounded-xl border border-[#e6e7e3] bg-white p-4.5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 pb-2.5 border-b border-[#eeefec]">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-950 text-emerald-300">
+                <MaterialIcon name="fingerprint" className="h-3.5 w-3.5" aria-hidden="true" />
+              </span>
+              <h2 className="font-heading text-sm font-bold text-slate-900">
+                Unified Customer Intelligence &amp; Multi-Camera Tracking
+              </h2>
+            </div>
+            <p className="mt-0.5 text-xs text-slate-500">
+              3-level identity architecture: Raw Detections &rarr; Camera Tracks &rarr; Daily Visitor Identity &rarr; Entrance-to-Exit Sessions
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 border border-emerald-200">
+              <MaterialIcon name="schedule" className="h-3 w-3" aria-hidden="true" />
+              Midnight Store-Day Reset
+            </span>
+          </div>
+        </div>
+
+        {/* Identity Pipeline Hierarchy Visualizer */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5 bg-[#fafaf8] p-3 rounded-lg border border-[#eeefec] text-xs">
+          <div className="p-2.5 rounded-md bg-white border border-[#eeefec]">
+            <div className="flex items-center justify-between text-slate-500 font-semibold text-[11px]">
+              <span>1. Raw Detections</span>
+              <MaterialIcon name="visibility" className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+            </div>
+            <div className="mt-1 font-heading text-lg font-bold text-slate-900 tabular-nums">
+              {visitorMetrics?.personDetections != null ? visitorMetrics.personDetections.toLocaleString() : "—"}
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-400">Frame-level bounding boxes (no count inflation)</p>
+          </div>
+
+          <div className="p-2.5 rounded-md bg-white border border-[#eeefec]">
+            <div className="flex items-center justify-between text-slate-500 font-semibold text-[11px]">
+              <span>2. Camera Tracks</span>
+              <MaterialIcon name="videocam" className="h-3.5 w-3.5 text-blue-500" aria-hidden="true" />
+            </div>
+            <div className="mt-1 font-heading text-lg font-bold text-slate-900 tabular-nums">
+              {visitorMetrics?.activeTracks != null ? visitorMetrics.activeTracks.toLocaleString() : "—"}
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-400">camera_id + tracker_id composite scope</p>
+          </div>
+
+          <div className="p-2.5 rounded-md bg-white border border-emerald-200/80 shadow-2xs">
+            <div className="flex items-center justify-between text-emerald-800 font-semibold text-[11px]">
+              <span>3. Daily Visitors</span>
+              <MaterialIcon name="person" className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+            </div>
+            <div className="mt-1 font-heading text-lg font-extrabold text-emerald-950 tabular-nums">
+              {visitorMetrics?.uniqueDailyVisitors != null ? visitorMetrics.uniqueDailyVisitors.toLocaleString() : "—"}
+            </div>
+            <p className="mt-0.5 text-[10px] text-emerald-700 font-medium">1 person = 1 identity per store-calendar day</p>
+          </div>
+
+          <div className="p-2.5 rounded-md bg-white border border-[#eeefec]">
+            <div className="flex items-center justify-between text-slate-500 font-semibold text-[11px]">
+              <span>4. Visit Sessions</span>
+              <MaterialIcon name="login" className="h-3.5 w-3.5 text-indigo-500" aria-hidden="true" />
+            </div>
+            <div className="mt-1 font-heading text-lg font-bold text-slate-900 tabular-nums">
+              {visitorMetrics?.visitSessions != null ? visitorMetrics.visitSessions.toLocaleString() : "—"}
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-400">Discrete entrance-to-exit customer journeys</p>
+          </div>
+        </div>
+
+        {/* Footfall Intelligence Details & Camera Ingress */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-1 text-xs">
+          <div className="rounded-lg border border-[#eeefec] bg-[#fafaf8] p-3">
+            <div className="flex items-center justify-between text-slate-600 font-semibold">
+              <span>Same-Day Returning Visitors</span>
+              <MaterialIcon name="replay" className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+            </div>
+            <div className="mt-2 font-heading text-2xl font-extrabold text-slate-900 tabular-nums">
+              {visitorMetrics?.returningVisitors != null ? visitorMetrics.returningVisitors.toLocaleString() : "—"}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Re-entered same store on same calendar day (reused daily identity with incremented visit count).
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-[#eeefec] bg-[#fafaf8] p-3 md:col-span-2">
+            <div className="flex items-center justify-between text-slate-600 font-semibold mb-2">
+              <span>Camera Stream Traffic Distribution</span>
+              <span className="text-[11px] font-mono text-slate-400">
+                {visitorMetrics?.cameraTraffic ? `${Object.keys(visitorMetrics.cameraTraffic).length} active streams` : "Active Streams"}
+              </span>
+            </div>
+            {visitorMetrics?.cameraTraffic && Object.keys(visitorMetrics.cameraTraffic).length > 0 ? (
+              <div className="space-y-2">
+                {Object.entries(visitorMetrics.cameraTraffic).map(([camId, count]) => {
+                  const maxCount = Math.max(...Object.values(visitorMetrics.cameraTraffic), 1);
+                  const pct = Math.round((count / maxCount) * 100);
+                  return (
+                    <div key={camId} className="space-y-0.5">
+                      <div className="flex justify-between text-[11px]">
+                        <span className="font-mono font-medium text-slate-700">{camId}</span>
+                        <span className="font-bold text-slate-900 tabular-nums">{count} detections</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-[#eeefec] rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-700 rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-slate-400 text-[11px] py-3 text-center">
+                No multi-camera telemetry received yet. Ingress tracking cameras will report here.
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Traffic Trajectory and Hourly Distribution */}
       <div className="grid gap-4 lg:grid-cols-2">

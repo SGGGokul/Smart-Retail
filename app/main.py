@@ -53,7 +53,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         rag_service = get_rag_service()
         session_factory = get_session_factory()
         async with session_factory() as session:
-            count = await rag_service.load_persisted_corpus(session)
+            import asyncio
+            count = await asyncio.wait_for(rag_service.load_persisted_corpus(session), timeout=1.5)
             if count > 0:
                 logger.info(
                     f"RAG Knowledge Base startup reload: {count} chunk(s) reloaded "

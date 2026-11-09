@@ -4,6 +4,8 @@ import type {
   AnalyticsTrafficResponse,
   AnalyticsDwellResponse,
   AnalyticsQueuesResponse,
+  VisitorMetricsResponse,
+  DailyVisitorListResponse,
 } from "@/types/analytics";
 
 /**
@@ -34,4 +36,20 @@ export async function getCustomerDwellTime(signal?: AbortSignal): Promise<Analyt
  */
 export async function getCheckoutQueues(signal?: AbortSignal): Promise<AnalyticsQueuesResponse> {
   return apiRequest<AnalyticsQueuesResponse>(ENDPOINTS.ANALYTICS_QUEUES, { signal });
+}
+
+/**
+ * Retrieves distinct visitor intelligence metrics: detections, active tracks, unique daily visitors, and visit sessions.
+ * GET /api/v1/customer-journey/metrics
+ */
+export async function getVisitorMetrics(signal?: AbortSignal): Promise<VisitorMetricsResponse> {
+  return apiRequest<VisitorMetricsResponse>(ENDPOINTS.CUSTOMER_JOURNEY_METRICS, { signal });
+}
+
+/**
+ * Retrieves anonymous daily visitor profiles for store-day.
+ * GET /api/v1/customer-journey/daily-visitors
+ */
+export async function getDailyVisitors(signal?: AbortSignal): Promise<DailyVisitorListResponse> {
+  return apiRequest<DailyVisitorListResponse>(ENDPOINTS.CUSTOMER_JOURNEY_DAILY_VISITORS, { signal });
 }

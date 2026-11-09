@@ -7,6 +7,11 @@ export interface ShelfItem {
   fillPct: number;
   status: ShelfStatus;
   lastChecked: string;
+  capacity?: number;
+  occupancy?: number;
+  emptyPositions?: number;
+  tierCount?: number;
+  productClasses?: string[];
 }
 
 export interface ShelvesResponse {
@@ -14,4 +19,16 @@ export interface ShelvesResponse {
   totalCount: number;
   criticalCount: number;
   lowStockCount: number;
+}
+
+export interface ShelfMetricsResponse {
+  shelfOccupancyPercentage: number;
+  emptyPositions: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  pickupCandidates: number;
+  confirmedPickups: number;
+  returnCandidates: number;
+  confirmedReturns: number;
+  customerShelfInteractions: number;
 }

@@ -7,8 +7,9 @@ import EmptyState from "@/components/ui/EmptyState";
 import NoticeBanner from "@/components/ui/NoticeBanner";
 import MaterialIcon from "@/components/ui/MaterialIcon";
 import { CardSkeleton } from "@/components/ui/Skeleton";
-import { listShelves } from "@/lib/api/shelf-monitoring";
-import type { ShelfItem, ShelfStatus } from "@/types/shelves";
+import { listShelves, getShelfMetrics, getRetailEventsTimeline } from "@/lib/api/shelf-monitoring";
+import type { ShelfItem, ShelfStatus, ShelfMetricsResponse } from "@/types/shelves";
+import type { RetailEvent, ConfirmationStatus } from "@/types/events";
 
 type SortOption = "critical-first" | "lowest-fill" | "highest-fill" | "aisle";
 
@@ -34,6 +35,11 @@ export default function ShelfMonitoringPage() {
   const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeRestockModal, setActiveRestockModal] = useState<ShelfItem | null>(null);
+  const [shelfMetrics, setShelfMetrics] = useState<ShelfMetricsResponse | null>(null);
+  const [retailEvents, setRetailEvents] = useState<RetailEvent[]>([]);
+  const [activeViewTab, setActiveViewTab] = useState<"bays" | "timeline">("bays");
+  const [timelineTypeFilter, setTimelineTypeFilter] = useState<string>("all");
+  const [timelineStatusFilter, setTimelineStatusFilter] = useState<string>("all");
 
   const fetchShelves = useCallback(async (filter: "all" | "critical" | "low" | "ok", signal?: AbortSignal) => {
     setIsLoading(true);
@@ -42,15 +48,37 @@ export default function ShelfMonitoringPage() {
     try {
       // Backend contract accepts "all" | "low" | "critical"
       const apiFilter = filter === "all" || filter === "ok" ? undefined : filter;
-      const res = await listShelves(apiFilter, signal);
+      const [shelvesRes, metricsRes, eventsRes] = await Promise.allSettled([
+        listShelves(apiFilter, signal),
+        getShelfMetrics(signal),
+        getRetailEventsTimeline(undefined, signal),
+      ]);
 
       if (signal?.aborted) return;
 
-      if (res && Array.isArray(res.shelves)) {
-        setShelvesList(res.shelves);
+      if (shelvesRes.status === "fulfilled" && Array.isArray(shelvesRes.value?.shelves)) {
+        setShelvesList(shelvesRes.value.shelves);
       } else {
+
         setShelvesList([]);
       }
+
+      if (metricsRes.status === "fulfilled") {
+        setShelfMetrics(metricsRes.value);
+      }
+
+      if (eventsRes.status === "fulfilled" && Array.isArray(eventsRes.value?.events)) {
+        setRetailEvents(eventsRes.value.events);
+      }
+      /*
+      }
+
+
+
+
+        setShelvesList([]);
+      }
+      */
     } catch (err) {
       if (signal?.aborted) return;
       setError(
@@ -118,6 +146,24 @@ export default function ShelfMonitoringPage() {
 
     return list;
   }, [shelvesList, statusFilter, searchQuery, sortBy]);
+
+  const filteredEvents = useMemo(() => {
+    return retailEvents.filter((evt) => {
+      const matchType =
+        timelineTypeFilter === "all"
+          ? true
+          : timelineTypeFilter === "pickups"
+          ? evt.eventType.includes("pickup")
+          : timelineTypeFilter === "returns"
+          ? evt.eventType.includes("return")
+          : evt.eventType.includes("interaction") || evt.eventType.includes("reach") || evt.eventType.includes("approach");
+
+      const matchStatus =
+        timelineStatusFilter === "all" ? true : evt.confirmationStatus === timelineStatusFilter;
+
+      return matchType && matchStatus;
+    });
+  }, [retailEvents, timelineTypeFilter, timelineStatusFilter]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -222,9 +268,99 @@ export default function ShelfMonitoringPage() {
             </span>
             <span className="text-[11px] text-emerald-800 mt-0.5 block">Above 70% threshold</span>
           </div>
+
+          <div className="rounded-xl border border-[#e6e7e3] bg-white p-4">
+            <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
+              <span>Interactions</span>
+              <MaterialIcon name="touch_app" className="h-3.5 w-3.5 text-blue-600" aria-hidden="true" />
+            </div>
+            <span className="mt-1 font-heading text-2xl font-extrabold text-slate-900 tabular-nums block">
+              {shelfMetrics?.customerShelfInteractions != null ? shelfMetrics.customerShelfInteractions : "—"}
+            </span>
+            <span className="text-[11px] text-slate-500 mt-0.5 block">Shelf reach &amp; approaches</span>
+          </div>
+
+          <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-4">
+            <div className="flex items-center justify-between text-xs text-indigo-900 font-semibold">
+              <span>Pickups</span>
+              <MaterialIcon name="shopping_basket" className="h-3.5 w-3.5 text-indigo-700" aria-hidden="true" />
+            </div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="font-heading text-2xl font-extrabold text-indigo-950 tabular-nums">
+                {shelfMetrics?.confirmedPickups != null ? shelfMetrics.confirmedPickups : "—"}
+              </span>
+              <span className="text-xs font-semibold text-indigo-700 tabular-nums">
+                ({shelfMetrics?.pickupCandidates != null ? shelfMetrics.pickupCandidates : 0} cand)
+              </span>
+            </div>
+            <span className="text-[11px] text-indigo-800 mt-0.5 block">Confirmed product removals</span>
+          </div>
+
+          <div className="rounded-xl border border-teal-200/80 bg-teal-50/40 p-4">
+            <div className="flex items-center justify-between text-xs text-teal-900 font-semibold">
+              <span>Returns</span>
+              <MaterialIcon name="assignment_return" className="h-3.5 w-3.5 text-teal-700" aria-hidden="true" />
+            </div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="font-heading text-2xl font-extrabold text-teal-950 tabular-nums">
+                {shelfMetrics?.confirmedReturns != null ? shelfMetrics.confirmedReturns : "—"}
+              </span>
+              <span className="text-xs font-semibold text-teal-700 tabular-nums">
+                ({shelfMetrics?.returnCandidates != null ? shelfMetrics.returnCandidates : 0} cand)
+              </span>
+            </div>
+            <span className="text-[11px] text-teal-800 mt-0.5 block">Restored items back on shelf</span>
+          </div>
+
+          <div className="rounded-xl border border-purple-200/80 bg-purple-50/40 p-4">
+            <div className="flex items-center justify-between text-xs text-purple-900 font-semibold">
+              <span>Empty Bay Slots</span>
+              <MaterialIcon name="crop_square" className="h-3.5 w-3.5 text-purple-700" aria-hidden="true" />
+            </div>
+            <span className="mt-1 font-heading text-2xl font-extrabold text-purple-950 tabular-nums block">
+              {shelfMetrics?.emptyPositions != null ? shelfMetrics.emptyPositions : "—"}
+            </span>
+            <span className="text-[11px] text-purple-800 mt-0.5 block">Spatial slot void detection</span>
+          </div>
         </section>
       )}
 
+      {/* View Switcher Tabs */}
+      <div className="flex items-center justify-between border-b border-[#e6e7e3] pb-2">
+        <div className="flex items-center gap-2" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeViewTab === "bays"}
+            onClick={() => setActiveViewTab("bays")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+              activeViewTab === "bays"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 hover:text-slate-900 border border-[#e6e7e3]"
+            }`}
+          >
+            <MaterialIcon name="grid_view" className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Monitored Shelf Bays ({shelvesList.length})</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeViewTab === "timeline"}
+            onClick={() => setActiveViewTab("timeline")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+              activeViewTab === "timeline"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 hover:text-slate-900 border border-[#e6e7e3]"
+            }`}
+          >
+            <MaterialIcon name="timeline" className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Unified Retail Events Timeline ({retailEvents.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {activeViewTab === "bays" ? (
+        <>
       {/* Filter and Search Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 rounded-xl border border-[#e6e7e3] bg-white p-3.5">
         {/* Status Filter Tabs */}
@@ -491,6 +627,201 @@ export default function ShelfMonitoringPage() {
             );
           })}
         </div>
+      )}
+
+        </>
+      ) : (
+        <section
+          aria-label="Unified Retail Events Timeline"
+          className="rounded-xl border border-[#e6e7e3] bg-white p-4.5 space-y-4"
+        >
+          {/* Timeline Header & Subtext */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 pb-2.5 border-b border-[#eeefec]">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-950 text-indigo-300">
+                  <MaterialIcon name="timeline" className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+                <h2 className="font-heading text-sm font-bold text-slate-900">
+                  Unified Retail Events Timeline &amp; State Transitions
+                </h2>
+              </div>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Temporal shelf interaction events, product pickups and returns state transitions with evidence verification
+              </p>
+            </div>
+            <span className="text-[11px] font-mono text-slate-400">
+              {retailEvents.length} recorded events
+            </span>
+          </div>
+
+          {/* Timeline Filters */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 bg-[#fafaf8] p-2.5 rounded-lg border border-[#eeefec] text-xs">
+            {/* Event Type Filter */}
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter events by type">
+              <span className="text-slate-500 font-semibold text-[11px] mr-1">Event Type:</span>
+              {[
+                { id: "all", label: "All Events" },
+                { id: "pickups", label: "Pickups" },
+                { id: "returns", label: "Returns" },
+                { id: "interactions", label: "Interactions" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setTimelineTypeFilter(tab.id)}
+                  className={`rounded-md px-2 py-0.5 font-semibold text-[11px] transition-colors cursor-pointer ${
+                    timelineTypeFilter === tab.id
+                      ? "bg-slate-900 text-white"
+                      : "bg-white text-slate-700 hover:text-slate-900 border border-[#e6e7e3]"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Confirmation Status Filter */}
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter events by status">
+              <span className="text-slate-500 font-semibold text-[11px] mr-1">Status:</span>
+              {[
+                { id: "all", label: "All Statuses" },
+                { id: "confirmed", label: "Confirmed" },
+                { id: "candidate", label: "Candidate" },
+                { id: "uncertain", label: "Uncertain" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setTimelineStatusFilter(tab.id)}
+                  className={`rounded-md px-2 py-0.5 font-semibold text-[11px] transition-colors cursor-pointer ${
+                    timelineStatusFilter === tab.id
+                      ? "bg-slate-900 text-white"
+                      : "bg-white text-slate-700 hover:text-slate-900 border border-[#e6e7e3]"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Timeline Events Table */}
+          {filteredEvents.length === 0 ? (
+            <EmptyState
+              icon="timeline"
+              title="No retail events found"
+              description={
+                retailEvents.length === 0
+                  ? "No computer vision retail events logged by the backend yet. Live detections will populate this timeline."
+                  : "No events matched the selected filters."
+              }
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs" aria-label="Retail events timeline table">
+                <thead className="border-b border-[#eeefec] bg-[#f8f8f6] text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  <tr>
+                    <th className="px-3 py-2">Timestamp</th>
+                    <th className="px-3 py-2">Event Type</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Shelf Zone</th>
+                    <th className="px-3 py-2">Customer Identity</th>
+                    <th className="px-3 py-2">Confidence</th>
+                    <th className="px-3 py-2">Evidence &amp; Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#eeefec]">
+                  {filteredEvents.map((evt) => {
+                    const isPickup = evt.eventType.includes("pickup");
+                    const isReturn = evt.eventType.includes("return");
+
+                    const dateStr = evt.timestamp
+                      ? new Date(evt.timestamp * 1000).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })
+                      : "—";
+
+                    return (
+                      <tr key={evt.id} className="hover:bg-[#fafaf8] transition-colors">
+                        <td className="px-3 py-2.5 font-mono text-slate-600 tabular-nums">
+                          {dateStr}
+                        </td>
+                        <td className="px-3 py-2.5 font-bold">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              isPickup
+                                ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                : isReturn
+                                ? "bg-teal-50 text-teal-700 border border-teal-200"
+                                : "bg-blue-50 text-blue-700 border border-blue-200"
+                            }`}
+                          >
+                            <MaterialIcon
+                              name={
+                                isPickup
+                                  ? "shopping_basket"
+                                  : isReturn
+                                  ? "assignment_return"
+                                  : "touch_app"
+                              }
+                              className="h-3 w-3"
+                              aria-hidden="true"
+                            />
+                            {evt.eventType.replace(/_/g, " ")}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <StatusBadge
+                            variant={
+                              evt.confirmationStatus === "confirmed"
+                                ? "success"
+                                : evt.confirmationStatus === "candidate"
+                                ? "warning"
+                                : evt.confirmationStatus === "uncertain"
+                                ? "info"
+                                : "critical"
+                            }
+                            size="sm"
+                          >
+                            {evt.confirmationStatus}
+                          </StatusBadge>
+                        </td>
+                        <td className="px-3 py-2.5 font-medium text-slate-800">
+                          {evt.shelfId || (evt.zoneId ? `Zone ${evt.zoneId}` : "Store Floor")}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-[11px] text-slate-700">
+                          {evt.visitorId ? (
+                            <span className="font-semibold text-emerald-800">
+                              {evt.visitorId.slice(0, 16)}
+                            </span>
+                          ) : evt.sessionId ? (
+                            <span className="text-slate-500">
+                              Session: {evt.sessionId.slice(0, 8)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic">Anonymous</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono font-bold text-slate-900 tabular-nums">
+                          {Math.round((evt.confidence || 0) * 100)}%
+                        </td>
+                        <td className="px-3 py-2.5 text-[11px] text-slate-500 max-w-xs truncate">
+                          {evt.relatedEventId
+                            ? `Related: ${evt.relatedEventId.slice(0, 8)}... `
+                            : ""}
+                          {evt.evidence ? JSON.stringify(evt.evidence) : "Vision evidence validated"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
       {/* Restock Details Modal */}

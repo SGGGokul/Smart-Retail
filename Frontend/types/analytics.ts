@@ -41,3 +41,31 @@ export interface AnalyticsQueuesResponse {
   queues: QueuePoint[];
   updatedAt: string;
 }
+
+export interface VisitorMetricsResponse {
+  personDetections: number;
+  activeTracks: number;
+  uniqueDailyVisitors: number;
+  visitSessions: number;
+  returningVisitors: number;
+  cameraTraffic: Record<string, number>;
+}
+
+export interface DailyVisitor {
+  id: string;
+  storeId: string;
+  localDate: string;
+  anonymousLabel: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  totalVisits: number;
+  totalDwellSeconds: number;
+  camerasSeen: string[];
+}
+
+export interface DailyVisitorListResponse {
+  visitors: DailyVisitor[];
+  totalCount: number;
+  uniqueDailyVisitors: number;
+  returningVisitors: number;
+}

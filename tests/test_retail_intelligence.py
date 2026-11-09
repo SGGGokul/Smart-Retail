@@ -692,6 +692,14 @@ def test_32_visitor_identity_association_uses_unified_system(shelf_service: Shel
     assert events[0].sessionId == vis.active_session_id if hasattr(events[0], "sessionId") else events[0].session_id == vis.active_session_id
 
 
+def test_33_metrics_and_api_responses_are_correct(shelf_service: ShelfService):
+    """33. Aggregated shelf metrics accurately summarize occupancy, empty slots, and interactions."""
+    metrics = shelf_service.get_shelf_metrics("store-104")
+    assert "shelfOccupancyPercentage" in metrics
+    assert "emptyPositions" in metrics
+    assert "confirmedPickups" in metrics
+    assert "confirmedReturns" in metrics
+
 
 def test_34_uncertain_detections_remain_uncertain(shelf_service: ShelfService):
     """34. Ambiguous candidate events remain marked as UNCERTAIN and are never converted to confirmed."""

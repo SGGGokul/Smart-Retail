@@ -2,8 +2,9 @@ from typing import Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from app.schemas.image import ImageDetectionResponse
-from app.schemas.shelves import ShelfItem, ShelvesResponse
+from app.schemas.shelves import ShelfItem, ShelfMetricsResponse, ShelvesResponse
 from app.services.image_service import get_image_detection_service
+from app.services.shelf_service import get_shelf_service
 
 router = APIRouter()
 
@@ -24,23 +25,57 @@ async def detect_shelf_image(
 
 
 @router.get(
+    "/metrics",
+    response_model=ShelfMetricsResponse,
+    summary="Get aggregated shelf occupancy and stock metrics",
+)
+async def get_shelf_metrics(
+    store_id: str = Query(default="store-104", description="Store ID"),
+) -> ShelfMetricsResponse:
+    """Retrieve store-level shelf occupancy percentage, empty positions, and pickup/return counts."""
+    service = get_shelf_service()
+    data = service.get_shelf_metrics(store_id=store_id)
+    return ShelfMetricsResponse(**data)
+
+
+@router.get(
     "",
     response_model=ShelvesResponse,
     summary="List monitored shelf zones",
 )
 async def list_shelves(
-    status: Optional[str] = Query(default=None, description="all | low | critical")
+    status: Optional[str] = Query(default=None, description="all | low | critical | ok"),
+    store_id: str = Query(default="store-104", description="Store ID"),
 ) -> ShelvesResponse:
-    """Lists all monitored retail shelf zones and stock levels.
+    """Lists all monitored retail shelf zones, stock fill levels, and empty positions."""
+    service = get_shelf_service()
+    shelf_states = service.list_shelves(store_id=store_id, status_filter=status)
 
-    NOTE: Shelf inventory detection with YOLO11n is not supported; returning
-    contract-valid empty response without fabricating fill percentages.
-    """
+    items = [
+        ShelfItem(
+            id=s.bay.shelf_id,
+            name=s.bay.name,
+            aisle=s.bay.aisle,
+            fillPct=s.fill_percentage,
+            status=s.status,  # type: ignore[arg-type]
+            lastChecked="Just now" if s.last_updated_timestamp > 0 else "Pending stream",
+            capacity=s.bay.configured_capacity,
+            occupancy=s.current_occupancy,
+            emptyPositions=s.empty_positions,
+            tierCount=s.bay.tier_count,
+            productClasses=s.bay.product_classes,
+        )
+        for s in shelf_states
+    ]
+
+    critical_count = sum(1 for item in items if item.status == "critical")
+    low_count = sum(1 for item in items if item.status == "low")
+
     return ShelvesResponse(
-        shelves=[],
-        totalCount=0,
-        criticalCount=0,
-        lowStockCount=0,
+        shelves=items,
+        totalCount=len(items),
+        criticalCount=critical_count,
+        lowStockCount=low_count,
     )
 
 
@@ -49,9 +84,29 @@ async def list_shelves(
     response_model=ShelfItem,
     summary="Get individual shelf zone",
 )
-async def get_shelf(id: str) -> ShelfItem:
+async def get_shelf(
+    id: str,
+    store_id: str = Query(default="store-104", description="Store ID"),
+) -> ShelfItem:
     """Retrieves an individual shelf bay status."""
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Shelf zone '{id}' not found.",
+    service = get_shelf_service()
+    state = service.get_shelf_state(store_id=store_id, shelf_id=id)
+    if not state:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Shelf zone '{id}' not found.",
+        )
+
+    return ShelfItem(
+        id=state.bay.shelf_id,
+        name=state.bay.name,
+        aisle=state.bay.aisle,
+        fillPct=state.fill_percentage,
+        status=state.status,  # type: ignore[arg-type]
+        lastChecked="Just now" if state.last_updated_timestamp > 0 else "Pending stream",
+        capacity=state.bay.configured_capacity,
+        occupancy=state.current_occupancy,
+        emptyPositions=state.empty_positions,
+        tierCount=state.bay.tier_count,
+        productClasses=state.bay.product_classes,
     )

@@ -11,9 +11,18 @@ export const ENDPOINTS = {
   ANALYTICS_DWELL_TIME: "/api/v1/analytics/dwell-time",
   ANALYTICS_QUEUES: "/api/v1/analytics/queues",
 
-  // Shelf Monitoring
+  // Customer Journey & Visitor Intelligence
+  CUSTOMER_JOURNEY_METRICS: "/api/v1/customer-journey/metrics",
+  CUSTOMER_JOURNEY_DAILY_VISITORS: "/api/v1/customer-journey/daily-visitors",
+  CUSTOMER_JOURNEY_VISITS: "/api/v1/customer-journey/visits",
+
+  // Shelf Monitoring & Stock Metrics
   SHELVES: "/api/v1/shelves",
+  SHELVES_METRICS: "/api/v1/shelves/metrics",
   SHELVES_DETECT: "/api/v1/shelves/detect",
+
+  // Unified Retail Events Timeline
+  EVENTS_TIMELINE: "/api/v1/events/timeline",
 
   // Image Detection
   IMAGES_DETECT: "/api/v1/images/detect",
