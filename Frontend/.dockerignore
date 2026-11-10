@@ -1,8 +1,11 @@
 node_modules
 .next
 .git
-.github
-reports
+.gitignore
+Dockerfile
+README.md
+*.log
+.DS_Store
+npm-debug.log
+pnpm-debug.log
 coverage
-playwright-report
-test-results

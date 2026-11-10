@@ -6,6 +6,12 @@ __pycache__
 data/uploads/*
 !data/uploads/.gitkeep
 data/external
+data/external/**
+results
+results/**
+docs
+*.zip
+*.log
 Frontend
 node_modules
 .git
