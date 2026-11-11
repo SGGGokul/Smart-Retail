@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveAssistantQuery } from "../lib/assistant.ts";
+import { resolveAssistantQuery, isRetailDomainQuery, DOMAIN_REJECTION_MESSAGE } from "../lib/assistant.ts";
 import {
   calculateShelfStatus,
   getInventorySummary,
@@ -166,4 +166,144 @@ test("Assistant Intent Routing & Fallback (P0 Bug Fixes)", async (t) => {
 test("Store Alerts Consistency", () => {
   const unacknowledged = alerts.filter((a) => !a.acknowledged);
   assert.equal(unacknowledged.length, 3, "Total active unacknowledged alerts must be exactly 3");
+});
+
+
+test("Domain Restriction — isRetailDomainQuery gate", async (t) => {
+  await t.test("Rejects jokes, poems, stories, general knowledge, and unrelated programming", () => {
+    const irrelevant = [
+      "Tell me a joke",
+      "Write a poem about the moon",
+      "Once upon a time there was a dragon",
+      "What is the capital of France?",
+      "Who won the World Cup in 2022?",
+      "Write a fibonacci program in Python",
+      "Explain quantum computing",
+      "What is 2 + 2?",
+      "Can you play chess?",
+      "Tell me a bedtime story",
+      "Write me a haiku",
+      "What is the meaning of life?",
+      "How do I sort an array in JavaScript?",
+      "Translate this to Spanish",
+      "What is the weather in Seattle?",
+    ];
+
+    for (const q of irrelevant) {
+      assert.equal(
+        isRetailDomainQuery(q),
+        false,
+        `"${q}" must be rejected as non-retail`
+      );
+    }
+  });
+
+  await t.test("Allows legitimate retail questions", () => {
+    const relevant = [
+      "How many customers visited today?",
+      "What is the unique customer count?",
+      "Which shelves need restocking?",
+      "What is the longest checkout queue?",
+      "Summarize today's alerts.",
+      "Show me store traffic for this week",
+      "Which aisle has the lowest inventory?",
+      "What is the average dwell time?",
+      "Are any cameras offline?",
+      "What is the sales performance today?",
+      "How many visitors entered through the main entrance?",
+      "Show multi-camera tracking data",
+      "Which products are out of stock?",
+      "Review queue incidents",
+      "What is the footfall trend this month?",
+    ];
+
+    for (const q of relevant) {
+      assert.equal(
+        isRetailDomainQuery(q),
+        true,
+        `"${q}" must be accepted as retail-related`
+      );
+    }
+  });
+
+  await t.test("Allows greetings through domain gate", () => {
+    const greetings = ["hi", "hello", "hey", "good morning", "yo", "Hi there"];
+    for (const g of greetings) {
+      assert.equal(
+        isRetailDomainQuery(g),
+        true,
+        `Greeting "${g}" must be allowed through domain gate`
+      );
+    }
+  });
+
+  await t.test("Rejects empty and whitespace-only input", () => {
+    assert.equal(isRetailDomainQuery(""), false);
+    assert.equal(isRetailDomainQuery("   "), false);
+  });
+
+  await t.test("DOMAIN_REJECTION_MESSAGE matches required specification", () => {
+    assert.equal(
+      DOMAIN_REJECTION_MESSAGE,
+      "I'm RetailIQ Copilot, your retail intelligence assistant. I can help with customer counting, store traffic analysis, product and shelf insights, sales analytics, and retail performance. Please ask a retail-related question."
+    );
+  });
+
+  await t.test("Domain gate and resolveAssistantQuery are consistent for starter prompts", () => {
+    const starterPrompts = [
+      "How many customers visited today?",
+      "Which shelves need restocking?",
+      "What is the longest checkout queue?",
+      "Summarize today's alerts.",
+    ];
+
+    for (const prompt of starterPrompts) {
+      assert.equal(
+        isRetailDomainQuery(prompt),
+        true,
+        `Starter prompt "${prompt}" must pass domain gate`
+      );
+      const res = resolveAssistantQuery(prompt, shelves);
+      assert.notEqual(
+        res.category,
+        "fallback",
+        `Starter prompt "${prompt}" must not be a fallback in intent router`
+      );
+    }
+  });
+
+  await t.test("Non-retail queries are blocked by domain gate before reaching LLM/RAG", () => {
+    const nonRetail = [
+      "Write me a fibonacci sequence",
+      "Tell me a joke about cats",
+      "What is the speed of light?",
+      "Who painted the Mona Lisa?",
+      "Generate a random password",
+    ];
+
+    for (const q of nonRetail) {
+      assert.equal(
+        isRetailDomainQuery(q),
+        false,
+        `"${q}" must be blocked by domain gate before reaching LLM`
+      );
+    }
+  });
+
+  await t.test("Suggested follow-ups in rejection are all retail-related", () => {
+    const retailFollowUps = [
+      "How many customers visited today?",
+      "Which shelves need restocking?",
+      "What is the longest checkout queue?",
+      "Summarize today's alerts.",
+    ];
+
+    for (const followUp of retailFollowUps) {
+      assert.equal(
+        isRetailDomainQuery(followUp),
+        true,
+        `Suggested follow-up "${followUp}" must itself be a valid retail query`
+      );
+    }
+  });
 });

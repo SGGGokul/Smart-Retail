@@ -5,6 +5,7 @@ import PageHeader from "@/components/dashboard/PageHeader";
 import NoticeBanner from "@/components/ui/NoticeBanner";
 import MaterialIcon from "@/components/ui/MaterialIcon";
 import { sendChatMessage } from "@/lib/api/assistant";
+import { isRetailDomainQuery, DOMAIN_REJECTION_MESSAGE } from "@/lib/assistant";
 import { getDashboardSummary } from "@/lib/api/dashboard";
 import type { AnalyticsSummaryResponse } from "@/types/dashboard";
 
@@ -86,6 +87,26 @@ export default function AiAssistantPage() {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
+
+    // Domain restriction: reject non-retail queries before calling the API
+    if (!isRetailDomainQuery(query)) {
+      const rejectionMsg: ChatMessage = {
+        id: createMessageId(),
+        sender: "assistant",
+        text: DOMAIN_REJECTION_MESSAGE,
+        suggestedFollowUps: [
+          "How many customers visited today?",
+          "Which shelves need restocking?",
+          "What is the longest checkout queue?",
+          "Summarize today's alerts.",
+        ],
+        source: "Domain Validation",
+        time: "Just now",
+      };
+      setMessages((prev) => [...prev, rejectionMsg]);
+      return;
+    }
+
     setIsLoading(true);
 
     try {

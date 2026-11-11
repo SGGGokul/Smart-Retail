@@ -25,6 +25,57 @@ export interface AssistantResolution {
 const GREETING_REGEX = /^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening)|yo|hi\s+there|hello\s+there)\b/i;
 
 /**
+ * Fixed professional rejection message for non-retail queries.
+ * Used consistently across frontend and backend domain validation.
+ */
+export const DOMAIN_REJECTION_MESSAGE =
+  "I'm RetailIQ Copilot, your retail intelligence assistant. I can help with customer counting, store traffic analysis, product and shelf insights, sales analytics, and retail performance. Please ask a retail-related question.";
+
+/**
+ * Retail-domain patterns used to gate whether a query falls within
+ * RetailIQ Copilot's scope before it reaches the LLM/RAG pipeline.
+ */
+const RETAIL_DOMAIN_PATTERNS = [
+  // Customer analytics & traffic
+  /\b(customer|customers|visitor|visitors|footfall|traffic|ingress|egress|shopper|shoppers)\b/i,
+  // Multi-camera & tracking
+  /\b(camera|cameras|cctv|sensor|sensors|tracking|multi[- ]?camera|detection|vision)\b/i,
+  // Shelf & inventory
+  /\b(shelf|shelves|restock|restocking|stock|inventory|deplet|bay|bays|out of stock|low stock|fill level|aisle|aisles|product|products|merchandise)\b/i,
+  // Sales & performance
+  /\b(sales|revenue|performance|analytics|summary|kpi|metric|metrics|trend|trends|forecast|conversion)\b/i,
+  // Checkout queues
+  /\b(queue|queues|checkout|checkouts|register|registers|wait time|waiting|bottleneck|lane|lanes|congestion)\b/i,
+  // Alerts & incidents
+  /\b(alert|alerts|incident|incidents|unacknowledged|unresolved|warning|warnings)\b/i,
+  // Store operations
+  /\b(store|stores|retail|shop|dwell|zone|zones|department|departments|section|sections)\b/i,
+  // Video analytics
+  /\b(video|videos|recording|recordings|playback|heatmap|heat map)\b/i,
+];
+
+/**
+ * Determines whether a user query falls within RetailIQ Copilot's retail domain.
+ *
+ * Returns `true` for retail-related queries and greetings.
+ * Returns `false` for jokes, poems, stories, general knowledge, and unrelated
+ * programming questions — these must never reach the LLM/RAG pipeline.
+ */
+export function isRetailDomainQuery(rawQuery: string): boolean {
+  const query = (rawQuery || "").trim();
+  if (!query) return false;
+
+  const qLower = query.toLowerCase();
+
+  // Allow greetings — handled separately by resolveAssistantQuery
+  if (GREETING_REGEX.test(qLower) || qLower === "hi" || qLower === "hello" || qLower === "hey") {
+    return true;
+  }
+
+  return RETAIL_DOMAIN_PATTERNS.some((pattern) => pattern.test(qLower));
+}
+
+/**
  * Resolves a natural-language query to an operational telemetry response.
  *
  * Prioritizes:

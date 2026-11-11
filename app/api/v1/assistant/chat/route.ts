@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isRetailDomainQuery, DOMAIN_REJECTION_MESSAGE } from "@/lib/assistant";
 
 const BACKEND_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") || "http://localhost:8000";
@@ -19,6 +20,20 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    // Domain restriction: reject non-retail queries before forwarding to FastAPI
+    if (!isRetailDomainQuery(message)) {
+      return NextResponse.json({
+        answer: DOMAIN_REJECTION_MESSAGE,
+        conversationId,
+        suggestedFollowUps: [
+          "How many customers visited today?",
+          "Which shelves need restocking?",
+          "What is the longest checkout queue?",
+          "Summarize today's alerts.",
+        ],
+      });
     }
 
     // Forward to FastAPI backend service
