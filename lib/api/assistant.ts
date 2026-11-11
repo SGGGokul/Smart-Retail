@@ -17,5 +17,6 @@ export async function sendChatMessage(
     method: "POST",
     body: payload as unknown as Record<string, unknown>,
     signal,
+    timeoutMs: 30000,
   });
 }
