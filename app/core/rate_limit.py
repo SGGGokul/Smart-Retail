@@ -91,8 +91,8 @@ POLICIES: Dict[str, RateLimitPolicy] = {
     "analytics": RateLimitPolicy(name="analytics", capacity=10, refill_rate=1.0),
     # Customer Journey: 10 tokens, 1 token/sec refill
     "customer_journey": RateLimitPolicy(name="customer_journey", capacity=10, refill_rate=1.0),
-    # AI Assistant / Groq: 2 tokens, 1 token/10 sec refill
-    "assistant": RateLimitPolicy(name="assistant", capacity=2, refill_rate=1.0 / 10.0),
+    # AI Assistant / Groq: 10 tokens, 1 token/sec refill
+    "assistant": RateLimitPolicy(name="assistant", capacity=10, refill_rate=1.0),
     # RAG Retrieval: 5 tokens, 1 token/5 sec refill
     "rag_retrieval": RateLimitPolicy(name="rag_retrieval", capacity=5, refill_rate=1.0 / 5.0),
     # RAG Ingestion: 1 token, 1 token/10 sec refill

@@ -59,6 +59,7 @@ class GroqService:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "retailiq-copilot/1.0",
         }
         payload = {
             "model": self.guard_model,
@@ -66,8 +67,9 @@ class GroqService:
         }
 
         t0 = time.time()
+        guard_timeout = min(self.timeout_seconds, 3.0)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=guard_timeout) as client:
                 response = await client.post(GROQ_API_URL, headers=headers, json=payload)
                 self.last_guard_latency_ms = (time.time() - t0) * 1000
 
@@ -84,7 +86,7 @@ class GroqService:
                     logger.warning(f"Prompt Guard API returned status {response.status_code}: {response.text[:100]}")
                     return None
         except Exception as err:
-            logger.warning(f"Prompt Guard request failed: {err}")
+            logger.warning(f"Prompt Guard request bypassed/failed: {err}")
             return None
 
     async def generate_response(
@@ -103,25 +105,28 @@ class GroqService:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "retailiq-copilot/1.0",
         }
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens or self.max_tokens,
+            "reasoning_format": "hidden",
         }
 
         t0 = time.time()
+        gen_timeout = min(self.timeout_seconds, 10.0)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=gen_timeout) as client:
                 response = await client.post(GROQ_API_URL, headers=headers, json=payload)
                 self.last_latency_ms = (time.time() - t0) * 1000
 
                 if response.status_code == 200:
                     data = response.json()
                     choice = data["choices"][0]
-                    content = choice["message"].get("content") or ""
-                    return content.strip()
+                    content = (choice["message"].get("content") or choice["message"].get("reasoning") or "").strip()
+                    return content
                 elif response.status_code == 429:
                     logger.error("Groq API rate limit exceeded.")
                     return None
@@ -129,7 +134,7 @@ class GroqService:
                     logger.error(f"Groq API error ({response.status_code}): {response.text[:200]}")
                     return None
         except httpx.TimeoutException:
-            logger.error(f"Groq API call timed out after {self.timeout_seconds}s.")
+            logger.error(f"Groq API call timed out after {gen_timeout}s.")
             return None
         except Exception as err:
             logger.error(f"Groq API call encountered exception: {err}")

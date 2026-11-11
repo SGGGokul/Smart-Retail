@@ -117,6 +117,27 @@ def create_application() -> FastAPI:
     # Register API v1 prefixed router for future domain endpoints
     application.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
 
+    @application.get(
+        "/",
+        tags=["Root"],
+        summary="Service Root",
+        description="Root health and discovery endpoint.",
+    )
+    def root() -> dict:
+        """Root health and discovery endpoint."""
+        return {
+            "status": "ok",
+            "service": settings.PROJECT_NAME,
+            "version": settings.VERSION,
+            "docs": "/docs",
+            "health": "/health",
+        }
+
+    @application.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> JSONResponse:
+        """Favicon fallback to prevent browser 404 errors."""
+        return JSONResponse(status_code=status.HTTP_204_NO_CONTENT, content=None)
+
     # -------------------------------------------------------------
     # Standard Error Handlers (Conforming to API_CONTRACT.md)
     # -------------------------------------------------------------
