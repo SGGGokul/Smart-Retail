@@ -1,0 +1,21 @@
+Platform: Windows-11-10.0.26300-SP0
+Processor: AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD
+Python: 3.14.6
+OpenCV: 5.0.0
+PyTorch: 2.14.1+cpu
+Ultralytics: 8.4.174
+Device selected: cpu
+GPU: N/A (CPU)
+Model weights: E:\Smart-Retail\yolo11n.pt
+Confidence threshold: 0.4
+Class filter: person (COCO class 0)
+Tracker: bytetrack.yaml
+Warm-up: up to 10 frames per video (excluded from reported timing)
+Inference FPS = measured frames / time spent inside model tracking calls after warm-up.
+End-to-end FPS = all frames / elapsed processing-loop time, including video decoding.
+
+Successfully benchmarked videos: 5
+Total measured frames: 19059
+Combined inference FPS: 18.369
+Combined end-to-end FPS: 17.594
+Note: results are machine-, software-, and workload-dependent.

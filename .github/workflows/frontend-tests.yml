@@ -1,0 +1,45 @@
+name: Frontend CI
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  frontend-tests:
+    name: Frontend Tests & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: Frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+          cache-dependency-path: Frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run TypeScript typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Run Frontend unit tests
+        run: pnpm run test
+
+      - name: Build Next.js production bundle
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+        run: pnpm run build

@@ -1,0 +1,37 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-ci:
+    name: Backend Validation
+    uses: ./.github/workflows/backend-tests.yml
+
+  frontend-ci:
+    name: Frontend Validation
+    uses: ./.github/workflows/frontend-tests.yml
+
+  database-ci:
+    name: Database & Cache Integration
+    uses: ./.github/workflows/database-integration.yml
+
+  docker-ci:
+    name: Docker Build Validation
+    uses: ./.github/workflows/docker-build.yml
+
+  security-ci:
+    name: Security & Vulnerability Auditing
+    uses: ./.github/workflows/security.yml
+
+  mlops-ci:
+    name: YOLO11n MLOps Validation
+    uses: ./.github/workflows/ml-validation.yml

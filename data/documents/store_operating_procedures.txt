@@ -1,0 +1,15 @@
+RetailIQ Store Operating Procedures (SOP-2026)
+
+Section 1: Customer Returns & Exchanges
+Items may be returned within 30 days of purchase with a valid original receipt at the Customer Service Desk.
+Perishable dairy, fresh meat, and produce items must be returned within 48 hours of purchase.
+Refunds are issued to the original form of payment. Unopened non-perishable goods without receipt qualify for store merchandise credit.
+
+Section 2: Slip and Fall Safety Protocol
+Upon detecting any liquid spill or glass breakage in aisles, employees must place high-visibility yellow caution cones within 60 seconds.
+Never leave an active wet spill unattended. Contact store facilities via channel 2 on the store radio for dry mop cleanup.
+
+Section 3: Checkout Register Queue Escalation
+Customer queues are monitored by computer-vision cameras over registers 1 through 6.
+When any lane experiences a queue of more than 4 waiting customers, or average wait time exceeds 3 minutes, the front-end manager must immediately open a secondary backup register lane.
+Lane 3 is equipped for priority express checkout (10 items or fewer).

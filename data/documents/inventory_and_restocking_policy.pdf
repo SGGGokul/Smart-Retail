@@ -1,0 +1,65 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Length 260 >>
+stream
+BT
+/F1 14 Tf
+50 720 Td
+(RetailIQ Produce Restocking Guidelines) Tj
+0 -24 Td
+/F1 11 Tf
+(Fresh produce must be restocked twice daily at 06:00 and 14:00.) Tj
+0 -18 Td
+(Bays with fill under 40% require immediate replenishment.) Tj
+0 -18 Td
+(Organic greens must be rotated using FIFO rotation protocol.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Length 260 >>
+stream
+BT
+/F1 14 Tf
+50 720 Td
+(RetailIQ Dairy and Bakery Temperature Standards) Tj
+0 -24 Td
+/F1 11 Tf
+(Dairy coolers must maintain temperature between 34F and 38F.) Tj
+0 -18 Td
+(Bakery display cases must be inspected every 2 hours.) Tj
+0 -18 Td
+(Temperature anomalies exceeding 40F trigger immediate alert.) Tj
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000125 00000 n 
+0000000254 00000 n 
+0000000383 00000 n 
+0000000456 00000 n 
+0000000780 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+1104
+%%EOF

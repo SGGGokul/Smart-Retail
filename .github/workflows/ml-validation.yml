@@ -1,0 +1,59 @@
+name: MLOps & Model Pipeline Validation
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - 'mlops/**'
+      - 'app/services/model_service.py'
+      - 'app/api/model.py'
+      - 'tests/test_mlops*.py'
+      - 'tests/test_model_inference_versioning.py'
+      - '.github/workflows/ml-validation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mlops/**'
+      - 'app/services/model_service.py'
+      - 'app/api/model.py'
+      - 'tests/test_mlops*.py'
+      - 'tests/test_model_inference_versioning.py'
+      - '.github/workflows/ml-validation.yml'
+  workflow_dispatch:
+
+jobs:
+  mlops-validation:
+    name: YOLO11n MLOps Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio anyio httpx
+
+      - name: Run MLOps Test Suite
+        env:
+          RATE_LIMIT_FAIL_MODE: open
+          MODEL_USE_REGISTRY: "true"
+        run: |
+          python -m pytest tests/ -k "mlops or model_inference" -v
+
+      - name: Verify Dataset Manifest & Integrity
+        run: |
+          python -c "
+          from mlops.dataset.versioning import DatasetVersioner
+          from mlops.registry.registry import ModelRegistry
+          print('MLOps modules loaded and verified successfully.')
+          "

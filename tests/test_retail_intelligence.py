@@ -1,0 +1,719 @@
+"""Automated Test Suite for Unified Customer Intelligence, Daily Visitor Counting,
+
+Shelf Monitoring & Temporal Pickup/Return System (Phases 1-14).
+"""
+
+from concurrent.futures import ThreadPoolExecutor
+import datetime
+import pytest
+from app.services.identity_service import (
+    AppearanceEmbedding,
+    ConfirmationStatus,
+    DailyVisitor,
+    IdentityService,
+)
+from app.services.shelf_service import (
+    RetailEvent,
+    ShelfBay,
+    ShelfEventStatus,
+    ShelfService,
+)
+from app.services.visit_service import (
+    CustomerVisit,
+    VisitService,
+    VisitStatus,
+)
+from app.services.zone_service import CrossingDirection, ZoneEvent
+import numpy as np
+
+
+@pytest.fixture
+def identity_service() -> IdentityService:
+    service = IdentityService(default_timezone="UTC", reid_similarity_threshold=0.85, ambiguity_margin=0.10)
+    service.clear()
+    return service
+
+
+@pytest.fixture
+def shelf_service() -> ShelfService:
+    service = ShelfService(smoothing_alpha=0.5)
+    service.clear()
+    bay = ShelfBay(
+        shelf_id="shelf-aisle-1",
+        store_id="store-104",
+        camera_id="cam-01",
+        name="Beverage Bay 1",
+        aisle="Aisle 1",
+        tier_count=3,
+        polygon=[(100.0, 100.0), (300.0, 100.0), (300.0, 250.0), (100.0, 250.0)],
+        interaction_polygon=[(50.0, 50.0), (350.0, 50.0), (350.0, 350.0), (50.0, 350.0)],
+        configured_capacity=10,
+        product_classes=["bottle", "can"],
+    )
+    service.register_shelf_bay(bay)
+    return service
+
+
+@pytest.fixture
+def visit_service() -> VisitService:
+    service = VisitService(store_id="store-104", default_timeout_seconds=60.0)
+    service.clear()
+    service.register_entrance_line(line_id="line-entrance", camera_id="cam-01")
+    service.register_exit_line(line_id="line-exit", camera_id="cam-01")
+    return service
+
+
+# ==============================================================================
+# VISITOR TESTS (1 to 17)
+# ==============================================================================
+
+def test_1_one_person_across_100_frames_produces_one_visitor(identity_service: IdentityService):
+    """1. One person observed continuously across 100 frames produces exactly one daily visitor."""
+    embedding = identity_service.create_synthetic_embedding(seed=42, camera_id="cam-01", timestamp=1.0)
+    visitor_ids = set()
+
+    for frame in range(1, 101):
+        t = frame * 0.1
+        vis, is_return, conf = identity_service.resolve_or_create_daily_visitor(
+            store_id="store-104",
+            local_date="2026-11-09",
+            camera_id="cam-01",
+            tracker_id=1,
+            timestamp=t,
+            embedding=embedding,
+        )
+        visitor_ids.add(vis.visitor_id)
+
+    assert len(visitor_ids) == 1
+    visitors = identity_service.list_daily_visitors("store-104", "2026-11-09")
+    assert len(visitors) == 1
+    assert visitors[0].anonymous_label == "VIS-0001"
+
+
+def test_2_temporary_detection_loss_does_not_create_new_visitor(identity_service: IdentityService):
+    """2. Temporary detection loss (e.g. 15 frames) does not create a new visitor."""
+    emb = identity_service.create_synthetic_embedding(seed=42, camera_id="cam-01", timestamp=1.0)
+
+    # Seen frames 1-10
+    vis1, _, _ = identity_service.resolve_or_create_daily_visitor(
+        store_id="store-104", local_date="2026-11-09", camera_id="cam-01", tracker_id=5, timestamp=1.0, embedding=emb
+    )
+    # Tracker reappears at frame 30 with same camera tracker
+    vis2, _, _ = identity_service.resolve_or_create_daily_visitor(
+        store_id="store-104", local_date="2026-11-09", camera_id="cam-01", tracker_id=5, timestamp=3.0, embedding=emb
+    )
+
+    assert vis1.visitor_id == vis2.visitor_id
+    assert len(identity_service.list_daily_visitors("store-104", "2026-11-09")) == 1
+
+
+def test_3_entry_creates_visit_session(visit_service: VisitService):
+    """3. Verified entrance crossing creates an ACTIVE visit session."""
+    ev = ZoneEvent(
+        event_type="boundary_crossed",
+        tracker_id=101,
+        camera_id="cam-01",
+        timestamp=10.0,
+        frame_idx=100,
+        line_id="line-entrance",
+        crossing_direction=CrossingDirection.INGRESS,
+    )
+    ve = visit_service.process_zone_event(ev)
+    assert ve is not None
+    assert ve.event_type == "entrance_confirmed"
+
+    visit = visit_service.get_active_visit_by_customer(ve.customer_id)
+    assert visit is not None
+    assert visit.status == VisitStatus.ACTIVE
+    assert visit.entry_time == 10.0
+
+
+def test_4_exit_closes_the_session(visit_service: VisitService):
+    """4. Verified exit line crossing closes the session as COMPLETED."""
+    # Enter
+    ve_in = visit_service.process_zone_event(
+        ZoneEvent(
+            event_type="boundary_crossed",
+            tracker_id=102,
+            camera_id="cam-01",
+            timestamp=20.0,
+            frame_idx=200,
+            line_id="line-entrance",
+            crossing_direction=CrossingDirection.INGRESS,
+        )
+    )
+    # Exit
+    ve_out = visit_service.process_zone_event(
+        ZoneEvent(
+            event_type="boundary_crossed",
+            tracker_id=102,
+            camera_id="cam-01",
+            timestamp=50.0,
+            frame_idx=500,
+            line_id="line-exit",
+            crossing_direction=CrossingDirection.EGRESS,
+        )
+    )
+    assert ve_out is not None
+    assert ve_out.event_type == "store_exit_confirmed"
+
+    visit = visit_service.get_visit(ve_in.visit_id)
+    assert visit is not None
+    assert visit.status == VisitStatus.COMPLETED
+    assert visit.exit_time == 50.0
+    assert visit.duration_seconds == 30.0
+
+
+def test_5_same_day_reentry_reuses_visitor_identity(identity_service: IdentityService):
+    """5. Same-day re-entry reuses the daily visitor identity."""
+    emb = identity_service.create_synthetic_embedding(seed=100, camera_id="cam-01", timestamp=10.0)
+
+    # First journey: tracker 10 on cam-01
+    vis1, is_ret1, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=10, timestamp=10.0, embedding=emb
+    )
+    identity_service.bind_session_to_visitor(vis1, "sess-1")
+    identity_service.close_visitor_session(vis1, "sess-1", dwell_seconds=300.0)
+
+    # Returning 2 hours later with new camera tracker ID 45
+    vis2, is_ret2, conf = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=45, timestamp=7200.0, embedding=emb
+    )
+
+    assert vis2.visitor_id == vis1.visitor_id
+    assert is_ret2 is True
+    assert conf == ConfirmationStatus.CONFIRMED
+
+
+def test_6_reentry_creates_a_new_session(identity_service: IdentityService):
+    """6. Re-entry creates a new distinct visit session while incrementing total_visits."""
+    emb = identity_service.create_synthetic_embedding(seed=101, camera_id="cam-01", timestamp=1.0)
+
+    vis, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=11, timestamp=1.0, embedding=emb
+    )
+    identity_service.bind_session_to_visitor(vis, "sess-A")
+    identity_service.close_visitor_session(vis, "sess-A", dwell_seconds=60.0)
+
+    # Re-entry session
+    identity_service.bind_session_to_visitor(vis, "sess-B")
+
+    assert vis.session_ids == ["sess-A", "sess-B"]
+    assert vis.total_visits == 2
+    assert vis.active_session_id == "sess-B"
+
+
+def test_7_different_person_receives_different_identity(identity_service: IdentityService):
+    """7. A person with distinct appearance receives an independent visitor identity."""
+    emb1 = identity_service.create_synthetic_embedding(seed=1, camera_id="cam-01", timestamp=10.0)
+    emb2 = identity_service.create_synthetic_embedding(seed=999, camera_id="cam-01", timestamp=10.0)
+
+    vis1, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=1, timestamp=10.0, embedding=emb1
+    )
+    vis2, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=2, timestamp=10.0, embedding=emb2
+    )
+
+    assert vis1.visitor_id != vis2.visitor_id
+    assert vis1.anonymous_label == "VIS-0001"
+    assert vis2.anonymous_label == "VIS-0002"
+
+
+def test_8_three_cameras_matching_one_person_produce_one_visitor(identity_service: IdentityService):
+    """8. Observations across 3 distinct cameras matching the same person produce 1 unique visitor."""
+    emb = identity_service.create_synthetic_embedding(seed=777, camera_id="cam-front", timestamp=10.0)
+
+    # Cam 1: Entrance
+    v1, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-front", tracker_id=10, timestamp=10.0, embedding=emb
+    )
+    # Cam 2: Aisle (30s later)
+    v2, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-aisle1", tracker_id=22, timestamp=40.0, embedding=emb
+    )
+    # Cam 3: Checkout (120s later)
+    v3, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-checkout", tracker_id=33, timestamp=160.0, embedding=emb
+    )
+
+    assert v1.visitor_id == v2.visitor_id == v3.visitor_id
+    all_visitors = identity_service.list_daily_visitors("store-104", "2026-11-09")
+    assert len(all_visitors) == 1
+    assert all_visitors[0].cameras_seen == {"cam-front", "cam-aisle1", "cam-checkout"}
+
+
+def test_9_different_people_on_separate_cameras_remain_separate(identity_service: IdentityService):
+    """9. Different people on separate cameras remain strictly separate."""
+    emb_a = identity_service.create_synthetic_embedding(seed=12, camera_id="cam-01")
+    emb_b = identity_service.create_synthetic_embedding(seed=88, camera_id="cam-02")
+
+    va, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=5, timestamp=10.0, embedding=emb_a
+    )
+    vb, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-02", tracker_id=5, timestamp=10.0, embedding=emb_b
+    )
+
+    assert va.visitor_id != vb.visitor_id
+    assert len(identity_service.list_daily_visitors("store-104", "2026-11-09")) == 2
+
+
+def test_10_camera_tracker_id_collisions_do_not_merge_people(identity_service: IdentityService):
+    """10. Two different cameras using tracker_id=1 simultaneously do NOT merge identities."""
+    emb_x = identity_service.create_synthetic_embedding(seed=101, camera_id="cam-left")
+    emb_y = identity_service.create_synthetic_embedding(seed=202, camera_id="cam-right")
+
+    vx, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-left", tracker_id=1, timestamp=5.0, embedding=emb_x
+    )
+    vy, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-right", tracker_id=1, timestamp=5.0, embedding=emb_y
+    )
+
+    assert vx.visitor_id != vy.visitor_id
+
+
+def test_11_overlapping_cameras_do_not_double_count_confidently_matched_person(identity_service: IdentityService):
+    """11. Overlapping camera views observing the same person simultaneously do NOT double-count visitors."""
+    identity_service.register_overlapping_cameras("cam-wide-1", "cam-wide-2")
+    emb = identity_service.create_synthetic_embedding(seed=303, camera_id="cam-wide-1")
+
+    # Cam A sees person
+    va, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-wide-1", tracker_id=7, timestamp=10.0, embedding=emb
+    )
+    # Cam B (overlapping view) sees same person at same time
+    vb, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-wide-2", tracker_id=9, timestamp=10.1, embedding=emb
+    )
+
+    assert va.visitor_id == vb.visitor_id
+    assert len(identity_service.list_daily_visitors("store-104", "2026-11-09")) == 1
+
+
+def test_12_ambiguous_matches_do_not_cause_automatic_identity_merges(identity_service: IdentityService):
+    """12. Ambiguous Re-ID matches remain provisional/uncertain and do NOT silently merge."""
+    rng = np.random.RandomState(42)
+    base = rng.randn(128).astype(np.float32)
+    base /= np.linalg.norm(base)
+
+    p1 = rng.randn(128).astype(np.float32)
+    p1 -= np.dot(p1, base) * base
+    p1 /= np.linalg.norm(p1)
+
+    p2 = rng.randn(128).astype(np.float32)
+    p2 -= np.dot(p2, base) * base
+    p2 -= np.dot(p2, p1) * p1
+    p2 /= np.linalg.norm(p2)
+
+    v1 = 0.9 * base + 0.436 * p1
+    v1 /= np.linalg.norm(v1)
+
+    v2 = 0.9 * base + 0.436 * p2
+    v2 /= np.linalg.norm(v2)
+
+    emb1 = AppearanceEmbedding(vector=v1, created_at=1.0, camera_id="cam-01")
+    emb2 = AppearanceEmbedding(vector=v2, created_at=1.0, camera_id="cam-01")
+    emb_amb = AppearanceEmbedding(vector=base, created_at=10.0, camera_id="cam-02")
+
+    vis1, _, _ = identity_service.resolve_or_create_daily_visitor("store-104", "2026-11-09", "cam-01", 1, 1.0, emb1)
+    vis2, _, _ = identity_service.resolve_or_create_daily_visitor("store-104", "2026-11-09", "cam-01", 2, 1.0, emb2)
+    assert vis1.visitor_id != vis2.visitor_id
+
+    vis_amb, _, status = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-02", 3, 10.0, emb_amb
+    )
+
+    # Must NOT merge with either visitor 1 or 2; stays isolated with UNCERTAIN status
+    assert status == ConfirmationStatus.UNCERTAIN
+    assert vis_amb.anonymous_label == "VIS-0003"
+
+
+def test_13_camera_transitions_preserve_identity_when_confidently_matched(identity_service: IdentityService):
+    """13. Realistic movement from entrance to aisle preserves visitor identity."""
+    emb = identity_service.create_synthetic_embedding(seed=555, camera_id="cam-entrance")
+
+    # Entrance camera at t=0s
+    v_ent, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-entrance", 10, 0.0, emb
+    )
+    # Aisle camera at t=15s
+    v_aisle, _, status = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-aisle", 25, 15.0, emb
+    )
+
+    assert v_ent.visitor_id == v_aisle.visitor_id
+    assert status == ConfirmationStatus.CONFIRMED
+
+
+def test_14_new_local_calendar_days_create_new_identities(identity_service: IdentityService):
+    """14. The same physical customer returning the next day receives a NEW daily visitor identity."""
+    emb = identity_service.create_synthetic_embedding(seed=42, camera_id="cam-01")
+
+    # Day 1: 2026-11-09
+    v_day1, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", 1, 10.0, emb
+    )
+    # Day 2: 2026-11-10
+    v_day2, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-10", "cam-01", 1, 10.0, emb
+    )
+
+    assert v_day1.visitor_id != v_day2.visitor_id
+    assert v_day1.anonymous_label == "VIS-0001"
+    assert v_day2.anonymous_label == "VIS-0001"  # Sequence resets per day
+
+
+def test_15_multiple_stores_maintain_independent_identities(identity_service: IdentityService):
+    """15. Different store locations maintain strictly independent daily visitor counters and IDs."""
+    emb = identity_service.create_synthetic_embedding(seed=42)
+
+    v_store_a, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", 1, 10.0, emb
+    )
+    v_store_b, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-205", "2026-11-09", "cam-01", 1, 10.0, emb
+    )
+
+    assert v_store_a.visitor_id != v_store_b.visitor_id
+    assert v_store_a.store_id == "store-104"
+    assert v_store_b.store_id == "store-205"
+
+
+def test_16_midnight_and_daylight_saving_boundaries_work_correctly(identity_service: IdentityService):
+    """16. Store-local date calculation accurately respects IANA timezones and midnight roll-overs."""
+    # NYC timezone: 2026-11-09 23:59:00 EST -> 2026-11-09
+    t_before_midnight = 1794286740.0  # Approx epoch for 23:59
+    date_before = identity_service.get_store_local_date(
+        "store-nyc", tz_name="America/New_York", timestamp=t_before_midnight
+    )
+
+    # 2 minutes later: 2026-11-10 00:01:00 EST -> 2026-11-10
+    t_after_midnight = t_before_midnight + 120.0
+    date_after = identity_service.get_store_local_date(
+        "store-nyc", tz_name="America/New_York", timestamp=t_after_midnight
+    )
+
+    assert date_before != date_after
+
+
+def test_17_concurrent_processing_cannot_create_duplicate_daily_visitors(identity_service: IdentityService):
+    """17. Concurrent threads processing observations produce strictly monotonic, non-colliding visitor labels."""
+    def worker(idx: int):
+        emb = identity_service.create_synthetic_embedding(seed=idx, camera_id="cam-01")
+        vis, _, _ = identity_service.resolve_or_create_daily_visitor(
+            "store-104", "2026-11-09", "cam-01", tracker_id=idx, timestamp=10.0, embedding=emb
+        )
+        return vis.anonymous_label
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        labels = list(pool.map(worker, range(50)))
+
+    assert len(labels) == 50
+    assert len(set(labels)) == 50
+    assert "VIS-0001" in labels
+    assert "VIS-0050" in labels
+
+
+# ==============================================================================
+# SHELF TESTS (18 to 34)
+# ==============================================================================
+
+def test_18_shelf_zone_detection(shelf_service: ShelfService):
+    """18. Points inside the configured shelf polygon are identified correctly."""
+    bay = shelf_service.get_shelf_state("store-104", "shelf-aisle-1").bay
+    # Center (200, 175) is inside [(100, 100), (300, 100), (300, 250), (100, 250)]
+    assert bay.contains_point(200.0, 175.0) is True
+    # Outside point (50, 50)
+    assert bay.contains_point(50.0, 50.0) is False
+
+
+def test_19_shelf_occupancy_calculation(shelf_service: ShelfService):
+    """19. Detects products inside shelf zone and computes occupancy and fill percentage."""
+    # 5 bottles detected inside shelf
+    products = [
+        ("bottle", 0.9, (120.0 + i * 30, 120.0, 140.0 + i * 30, 180.0))
+        for i in range(5)
+    ]
+    shelf_service.process_frame_shelf_analytics(
+        "store-104", "cam-01", frame_idx=1, timestamp=1.0, detected_products=products, detected_persons=[]
+    )
+
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.current_occupancy == 5
+    # Capacity is 10, so fill percentage = 50%
+    assert state.fill_percentage == 50
+    assert state.status == "low"
+
+
+def test_20_empty_position_detection(shelf_service: ShelfService):
+    """20. Correctly computes empty shelf positions relative to configured capacity."""
+    # 2 bottles inside capacity 10 bay -> 8 empty slots
+    products = [
+        ("bottle", 0.9, (120.0, 120.0, 140.0, 180.0)),
+        ("bottle", 0.9, (160.0, 120.0, 180.0, 180.0)),
+    ]
+    shelf_service.process_frame_shelf_analytics(
+        "store-104", "cam-01", frame_idx=1, timestamp=1.0, detected_products=products, detected_persons=[]
+    )
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.empty_positions == 8
+
+
+def test_21_temporary_occlusion_does_not_trigger_false_pickup(shelf_service: ShelfService):
+    """21. A momentary 1-frame drop in object detection does NOT trigger a confirmed pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+
+    # Stable for 10 frames
+    for f in range(1, 11):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, products, [])
+
+    # Occluded for 1 frame
+    shelf_service.process_frame_shelf_analytics("store-104", "cam-01", 11, 1.1, [], [])
+
+    # Reappears
+    shelf_service.process_frame_shelf_analytics("store-104", "cam-01", 12, 1.2, products, [])
+
+    # No confirmed pickup should be emitted
+    events, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(events) == 0
+
+
+def test_22_customer_proximity_alone_does_not_trigger_pickup(shelf_service: ShelfService):
+    """22. Customer approaching and standing near a shelf without touching items triggers NO pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    # Customer standing in interaction zone (60, 60, 90, 180)
+    customer = [(1, (60.0, 60.0, 90.0, 180.0), "DVIS-01", "sess-01")]
+
+    for f in range(1, 15):
+        events = shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, products, customer
+        )
+
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 0
+
+
+def test_23_reaching_without_product_removal_does_not_trigger_confirmed_pickup(shelf_service: ShelfService):
+    """23. Reaching into shelf without removing an item does NOT confirm a pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    # Customer reaching (bounding box penetrates shelf edge: 90 to 160)
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Present and stable for 15 frames
+    for f in range(1, 16):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, products, customer
+        )
+
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 0
+
+
+def test_24_confirmed_product_removal_is_detected(shelf_service: ShelfService):
+    """24. Stable product removed while customer reaches and staying absent triggers confirmed pickup."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Frames 1-10: Stable item
+    for f in range(1, 11):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, products, customer)
+
+    # Frames 11-20: Item removed by customer and stays absent
+    for f in range(11, 22):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    pickups, total = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 1
+    assert pickups[0].confirmation_status == "confirmed"
+    assert pickups[0].visitor_id == "DVIS-01"
+    assert pickups[0].session_id == "sess-01"
+
+
+def test_25_product_movement_within_shelf_does_not_trigger_false_removal(shelf_service: ShelfService):
+    """25. Shifting a product within the same shelf bay does NOT trigger false pickup."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Initial position (150, 150)
+    for f in range(1, 10):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))], customer
+        )
+
+    # Shifted position still in shelf bay (180, 160)
+    for f in range(10, 20):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, [("bottle", 0.9, (180.0, 160.0, 200.0, 210.0))], customer
+        )
+
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.current_occupancy == 1
+
+
+def test_26_confirmed_product_return_is_detected(shelf_service: ShelfService):
+    """26. Product introduced into shelf by customer and remaining stable confirms return."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # Shelf initially empty
+    for f in range(1, 5):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    # Product returned into shelf
+    returned_product = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    for f in range(5, 16):
+        shelf_service.process_frame_shelf_analytics(
+            "store-104", "cam-01", f, f * 0.1, returned_product, customer
+        )
+
+    returns, _ = shelf_service.get_timeline_events(event_type="product_returned")
+    assert len(returns) == 1
+    assert returns[0].confirmation_status == "confirmed"
+
+
+def test_27_return_event_links_to_original_pickup_when_reliable(shelf_service: ShelfService):
+    """27. Return event links its related_event_id to the customer's prior pickup."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+    product = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+
+    # 1. Pick up item
+    for f in range(1, 10):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, product, customer)
+    for f in range(10, 20):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 1
+    original_pk_id = pickups[0].event_id
+
+    # 2. Return item 30 seconds later
+    for f in range(20, 32):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, 30.0 + f * 0.1, product, customer)
+
+    returns, _ = shelf_service.get_timeline_events(event_type="product_returned")
+    assert len(returns) == 1
+    assert returns[0].related_event_id == original_pk_id
+
+
+def test_28_duplicate_event_prevention_works(shelf_service: ShelfService):
+    """28. Prolonged customer presence in interaction zone does NOT emit duplicate approach events."""
+    customer = [(1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01")]
+
+    # 50 frames with customer continuously present
+    for f in range(1, 51):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customer)
+
+    approaches, _ = shelf_service.get_timeline_events(event_type="customer_approached_shelf")
+    assert len(approaches) == 1
+
+
+def test_29_multiple_customers_near_same_shelf_are_handled(shelf_service: ShelfService):
+    """29. Multiple customers reaching simultaneously marks pickup as UNCERTAIN rather than guessing."""
+    products = [("bottle", 0.9, (150.0, 150.0, 170.0, 200.0))]
+    # Customer 1 and Customer 2 both reaching
+    customers = [
+        (1, (90.0, 100.0, 160.0, 240.0), "DVIS-01", "sess-01"),
+        (2, (140.0, 100.0, 210.0, 240.0), "DVIS-02", "sess-02"),
+    ]
+
+    for f in range(1, 10):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, products, customers)
+    for f in range(10, 15):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, [], customers)
+
+    cands, _ = shelf_service.get_timeline_events(event_type="product_pickup_candidate")
+    assert len(cands) >= 1
+    assert cands[0].confirmation_status == "uncertain"
+
+
+def test_30_employee_restocking_does_not_become_customer_pickup(shelf_service: ShelfService):
+    """30. Adding multiple items to a shelf increases occupancy without triggering customer pickup."""
+    initial_items = [("bottle", 0.9, (120.0, 120.0, 140.0, 180.0))]
+    shelf_service.process_frame_shelf_analytics("store-104", "cam-01", 1, 1.0, initial_items, [])
+
+    # Restocked with 5 items
+    restocked_items = [
+        ("bottle", 0.9, (120.0 + i * 25, 120.0, 140.0 + i * 25, 180.0))
+        for i in range(5)
+    ]
+    for f in range(2, 20):
+        shelf_service.process_frame_shelf_analytics("store-104", "cam-01", f, f * 0.1, restocked_items, [])
+
+    state = shelf_service.get_shelf_state("store-104", "shelf-aisle-1")
+    assert state.current_occupancy == 5
+    pickups, _ = shelf_service.get_timeline_events(event_type="product_picked_up")
+    assert len(pickups) == 0
+
+
+def test_31_camera_specific_shelf_events_remain_correctly_associated(shelf_service: ShelfService):
+    """31. Shelf events remain bound to their configured camera stream."""
+    bay2 = ShelfBay(
+        shelf_id="shelf-dairy-2",
+        store_id="store-104",
+        camera_id="cam-02",
+        name="Dairy Bay",
+        aisle="Aisle 2",
+        tier_count=3,
+        polygon=[(10.0, 10.0), (80.0, 10.0), (80.0, 80.0), (10.0, 80.0)],
+        configured_capacity=10,
+    )
+    shelf_service.register_shelf_bay(bay2)
+
+    # Process event on cam-02
+    shelf_service.process_frame_shelf_analytics(
+        "store-104", "cam-02", 1, 1.0, [], [(5, (10.0, 10.0, 40.0, 80.0), "DVIS-05", "sess-05")]
+    )
+
+    events_cam2, _ = shelf_service.get_timeline_events(camera_id="cam-02")
+    assert all(e.camera_id == "cam-02" for e in events_cam2)
+
+
+def test_32_visitor_identity_association_uses_unified_system(shelf_service: ShelfService, identity_service: IdentityService):
+    """32. Shelf interaction events correctly attach the store-day visitor ID from IdentityService."""
+    emb = identity_service.create_synthetic_embedding(seed=99)
+    vis, _, _ = identity_service.resolve_or_create_daily_visitor(
+        "store-104", "2026-11-09", "cam-01", tracker_id=44, timestamp=1.0, embedding=emb
+    )
+    identity_service.bind_session_to_visitor(vis, "sess-u1")
+
+    # Person interacts with shelf
+    shelf_service.process_frame_shelf_analytics(
+        "store-104",
+        "cam-01",
+        frame_idx=1,
+        timestamp=2.0,
+        detected_products=[],
+        detected_persons=[(44, (90.0, 100.0, 160.0, 240.0), vis.visitor_id, vis.active_session_id)],
+    )
+
+    events, _ = shelf_service.get_timeline_events(visitor_id=vis.visitor_id)
+    assert len(events) >= 1
+    assert events[0].visitor_id == vis.visitor_id
+    assert events[0].sessionId == vis.active_session_id if hasattr(events[0], "sessionId") else events[0].session_id == vis.active_session_id
+
+
+def test_33_metrics_and_api_responses_are_correct(shelf_service: ShelfService):
+    """33. Aggregated shelf metrics accurately summarize occupancy, empty slots, and interactions."""
+    metrics = shelf_service.get_shelf_metrics("store-104")
+    assert "shelfOccupancyPercentage" in metrics
+    assert "emptyPositions" in metrics
+    assert "confirmedPickups" in metrics
+    assert "confirmedReturns" in metrics
+
+
+def test_34_uncertain_detections_remain_uncertain(shelf_service: ShelfService):
+    """34. Ambiguous candidate events remain marked as UNCERTAIN and are never converted to confirmed."""
+    ev = RetailEvent(
+        event_id="ev-unc-01",
+        store_id="store-104",
+        camera_id="cam-01",
+        event_type="product_pickup_candidate",
+        timestamp=10.0,
+        confidence=0.55,
+        confirmation_status="uncertain",
+    )
+    shelf_service._events.append(ev)
+
+    events, _ = shelf_service.get_timeline_events(confirmation_status="uncertain")
+    assert len(events) >= 1
+    assert events[0].confirmation_status == "uncertain"

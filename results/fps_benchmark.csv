@@ -1,0 +1,6 @@
+﻿video,source_fps,reported_total_frames,warmup_frames_excluded,measured_frames,inference_seconds,loop_seconds_including_decode,inference_fps,end_to_end_fps,device,gpu
+1_1_crop.mp4,30.0,3920,10,3910,210.0334,219.2642,18.616,17.832,cpu,N/A (CPU)
+2_1_crop.mp4,30.0,3804,10,3794,213.81,222.9707,17.745,17.016,cpu,N/A (CPU)
+3_1_crop.mp4,30.0,3694,10,3684,200.1614,208.6498,18.405,17.656,cpu,N/A (CPU)
+4_1_crop.mp4,30.0,3969,10,3959,204.7155,214.7496,19.339,18.435,cpu,N/A (CPU)
+5_1_crop.mp4,30.0,3722,10,3712,208.8197,217.6593,17.776,17.054,cpu,N/A (CPU)
