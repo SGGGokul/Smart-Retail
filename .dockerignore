@@ -6,3 +6,9 @@ reports
 coverage
 playwright-report
 test-results
+Backend
+New folder
+.venv
+graphify-out
+*.log
+

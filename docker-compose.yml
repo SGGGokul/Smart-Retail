@@ -1,3 +1,5 @@
+name: retailiq
+
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -58,7 +60,7 @@ services:
         condition: service_healthy
     volumes:
       - ./Backend/data:/app/data
-      - model_cache:/root/.cache
+      - model_cache:/home/appuser/.cache
     networks:
       - retailiq_net
 
