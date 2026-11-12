@@ -33,6 +33,7 @@ class VideoJob(BaseModel):
     id: str
     file: str
     uploaded: str
+    uploadedAt: Optional[str] = None
     status: JobStatus
     frames: int = 0
     customersDetected: int = 0

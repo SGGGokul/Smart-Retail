@@ -39,7 +39,7 @@ class Store(Base):
     )
     timezone: Mapped[str] = mapped_column(
         String(50),
-        default="UTC",
+        default="Asia/Kolkata",
         nullable=False,
     )
     created_at: Mapped[DateTime] = mapped_column(

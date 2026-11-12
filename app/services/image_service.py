@@ -10,6 +10,14 @@ import numpy as np
 
 from app.core.config import get_settings
 from app.schemas.image import ImageBox, ImageDetectionBox, ImageDetectionResponse
+from app.schemas.shelves import (
+    ShelfAnalysisResponse,
+    ShelfDetectedProduct,
+    ShelfEmptySpace,
+    ShelfSectionDetail,
+)
+from app.services.empty_shelf_detector import get_empty_shelf_detector
+from app.services.rule_engine import get_rule_engine
 
 # Prevent Ultralytics auto-telemetry or permission warnings
 os.environ.setdefault("YOLO_OFFLINE", "1")

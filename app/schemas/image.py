@@ -51,3 +51,23 @@ class ImageDetectionResponse(BaseModel):
         ),
         description="Transparency note on model capabilities",
     )
+    shelfOccupancyPercentage: Optional[float] = Field(
+        default=None,
+        description="Calculated shelf occupancy percentage across detected sections",
+    )
+    shelfStatus: Optional[str] = Field(
+        default=None,
+        description="Empty shelf / stock status: ok | low | critical | empty | poor_lighting",
+    )
+    emptySpacesCount: Optional[int] = Field(
+        default=None,
+        description="Number of detected empty shelf gaps / out-of-stock regions",
+    )
+    generatedAlertId: Optional[str] = Field(
+        default=None,
+        description="Identifier of automatically generated incident alert if thresholds were breached",
+    )
+    generatedAlertSeverity: Optional[str] = Field(
+        default=None,
+        description="Severity of generated alert: critical | warning | info",
+    )

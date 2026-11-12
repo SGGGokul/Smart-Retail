@@ -13,6 +13,14 @@ class AlertItem(BaseModel):
     severity: Severity
     description: str
     acknowledged: bool = False
+    createdAt: Optional[str] = None
+    acknowledgedAt: Optional[str] = None
+    shelfId: Optional[str] = None
+    shelfOccupancy: Optional[float] = None
+    detectedProducts: Optional[int] = None
+    imageUrl: Optional[str] = None
+    annotatedImageUrl: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class AlertsResponse(BaseModel):

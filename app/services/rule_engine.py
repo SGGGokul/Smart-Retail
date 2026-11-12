@@ -11,6 +11,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.datetime_utils import (
+    format_store_time_hm,
+    to_utc_iso,
+    utc_now,
+)
 from app.db.session import get_session_factory
 from app.models.alert import Alert as AlertModel
 from app.schemas.alerts import AlertItem, AlertUpdateRequest, Severity
@@ -55,11 +60,31 @@ class RuleEngine:
 
     @staticmethod
     def _orm_to_schema(alert_orm: AlertModel) -> AlertItem:
+        created_iso = to_utc_iso(alert_orm.created_at)
+        acknowledged_iso = to_utc_iso(alert_orm.acknowledged_at)
         time_display = (
-            alert_orm.time_str
-            if alert_orm.time_str
-            else alert_orm.created_at.strftime("%H:%M") if alert_orm.created_at else ""
+            format_store_time_hm(alert_orm.created_at)
+            if alert_orm.created_at
+            else (alert_orm.time_str or "")
         )
+
+        shelf_id = getattr(alert_orm, "shelf_id", None)
+        shelf_occupancy = getattr(alert_orm, "shelf_occupancy", None)
+        detected_products = getattr(alert_orm, "detected_products", None)
+        annotated_image = getattr(alert_orm, "annotated_image_url", None)
+
+        notes_str = alert_orm.notes
+        if (shelf_id is None or shelf_occupancy is None) and notes_str and notes_str.startswith("{"):
+            try:
+                import json
+                meta = json.loads(notes_str)
+                shelf_id = shelf_id or meta.get("shelf_id")
+                shelf_occupancy = shelf_occupancy if shelf_occupancy is not None else meta.get("shelf_occupancy")
+                detected_products = detected_products if detected_products is not None else meta.get("detected_products")
+                annotated_image = annotated_image or meta.get("annotated_image_url")
+            except Exception:
+                pass
+
         return AlertItem(
             id=alert_orm.id,
             type=alert_orm.alert_type,
@@ -68,6 +93,13 @@ class RuleEngine:
             severity=alert_orm.severity,  # type: ignore[arg-type]
             description=alert_orm.description,
             acknowledged=alert_orm.acknowledged,
+            createdAt=created_iso,
+            acknowledgedAt=acknowledged_iso,
+            shelfId=shelf_id,
+            shelfOccupancy=shelf_occupancy,
+            detectedProducts=detected_products,
+            annotatedImageUrl=annotated_image,
+            notes=notes_str,
         )
 
     async def evaluate_and_persist(
@@ -81,8 +113,8 @@ class RuleEngine:
         to PostgreSQL using INSERT ... ON CONFLICT DO NOTHING.
         """
         settings = get_settings()
-        now = datetime.datetime.now()
-        now_str = now.strftime("%H:%M")
+        now_utc = utc_now()
+        now_str = format_store_time_hm(now_utc)
 
         # Stable job identifier for idempotency computation (uses actual job_id in production)
         effective_key_job_id = job_id or cv_data.get("job_id") or f"eval-{uuid.uuid4().hex[:6]}"
@@ -231,6 +263,7 @@ class RuleEngine:
                         description=item["description"],
                         acknowledged=False,
                         time_str=item["time_str"],
+                        created_at=now_utc,
                     )
                     .on_conflict_do_nothing(index_elements=["idempotency_key"])
                 )
@@ -262,6 +295,186 @@ class RuleEngine:
     ) -> List[AlertItem]:
         """Synchronous entry point for evaluating CV metrics and persisting alerts."""
         return _run_async(self.evaluate_and_persist(cv_data, job_id=job_id))
+
+    async def evaluate_shelf_telemetry(
+        self,
+        shelf_data: Dict[str, Any],
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[AlertItem]:
+        """Evaluate retail shelf vision telemetry against out-of-stock and depletion rules,
+
+        persist incidents with duplicate prevention, and auto-resolve on replenishment.
+        """
+        import json
+        settings = get_settings()
+        now_utc = utc_now()
+        now_str = format_store_time_hm(now_utc)
+
+        shelf_id = shelf_data.get("shelf_id") or shelf_data.get("shelfId") or "shelf-unknown"
+        location = shelf_data.get("location") or shelf_data.get("area") or f"Zone {shelf_id}"
+        occupancy_pct = float(shelf_data.get("overall_occupancy_pct", shelf_data.get("shelfOccupancy", 100.0)))
+        detected_products = int(shelf_data.get("total_products_count", shelf_data.get("detectedProducts", 0)))
+        empty_sections = int(shelf_data.get("empty_sections_count", 0))
+        total_sections = int(shelf_data.get("total_sections_count", 3))
+        is_reliable = bool(shelf_data.get("is_detection_reliable", True))
+        annotated_image_url = shelf_data.get("annotated_image") or shelf_data.get("annotatedImageUrl")
+
+        warning_threshold = float(shelf_data.get("warning_threshold") or settings.ALERT_SHELF_WARNING_THRESHOLD)
+        critical_threshold = float(shelf_data.get("critical_threshold") or settings.ALERT_SHELF_CRITICAL_THRESHOLD)
+        empty_threshold = float(shelf_data.get("empty_threshold") or settings.ALERT_SHELF_EMPTY_THRESHOLD)
+
+        # 1. Unreliable / Poor Lighting Guard
+        # If detection is not reliable (e.g. poor lighting, blur), avoid treating failure as an empty shelf
+        if not is_reliable:
+            logger.info(f"Shelf telemetry for {shelf_id} is marked unreliable. Out-of-stock alert withheld.")
+            return None
+
+        # 2. Automated Replenishment Check
+        # If the shelf is adequately stocked (>= warning_threshold), auto-resolve existing open incidents for this shelf
+        if occupancy_pct >= warning_threshold:
+            async def _resolve_replenished(s: AsyncSession) -> None:
+                stmt = (
+                    update(AlertModel)
+                    .where(
+                        AlertModel.shelf_id == shelf_id,
+                        AlertModel.acknowledged.is_(False),
+                    )
+                    .values(
+                        acknowledged=True,
+                        acknowledged_at=now_utc,
+                        notes=f"Auto-resolved: Shelf replenished to {occupancy_pct:.0f}% occupancy ({detected_products} items detected) at {now_str}.",
+                    )
+                )
+                res = await s.execute(stmt)
+                if res.rowcount > 0:
+                    logger.info(f"Auto-resolved {res.rowcount} open alert(s) for replenished shelf {shelf_id} ({occupancy_pct:.0f}%)")
+
+            if session is not None:
+                await _resolve_replenished(session)
+            else:
+                session_factory = get_session_factory()
+                async with session_factory() as s:
+                    async with s.begin():
+                        await _resolve_replenished(s)
+            return None
+
+        # 3. Determine Alert Type & Severity
+        if occupancy_pct <= empty_threshold or (empty_sections > 0 and empty_sections == total_sections):
+            severity = "critical"
+            alert_type = "Out-of-Stock Empty Shelf"
+            desc = (
+                f"Shelf '{shelf_id}' at {location} is completely out of stock "
+                f"({occupancy_pct:.0f}% occupancy, 0 products detected). Immediate restocking dispatch required."
+            )
+        elif occupancy_pct < critical_threshold or empty_sections > 0:
+            severity = "critical"
+            alert_type = "Critical Shelf Depletion"
+            desc = (
+                f"Shelf '{shelf_id}' at {location} has dropped to {occupancy_pct:.0f}% occupancy "
+                f"({detected_products} products detected, {empty_sections} empty section(s)). Priority restock required."
+            )
+        elif occupancy_pct < warning_threshold:
+            severity = "warning"
+            alert_type = "Low Shelf Stock"
+            desc = (
+                f"Shelf '{shelf_id}' at {location} has dropped to {occupancy_pct:.0f}% occupancy "
+                f"({detected_products} products detected). Restock warning."
+            )
+        else:
+            return None
+
+        # 4. Duplicate Prevention via Idempotency Key
+        raw_key = f"shelf:{shelf_id}:{alert_type}:{severity}"
+        idem_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+        alert_id = f"al-shelf-{uuid.uuid4().hex[:8]}"
+
+        notes_payload = {
+            "shelf_id": shelf_id,
+            "shelf_occupancy": round(occupancy_pct, 1),
+            "detected_products": detected_products,
+            "annotated_image_url": annotated_image_url,
+        }
+        notes_json = json.dumps(notes_payload)
+
+        async def _persist_shelf_alert(s: AsyncSession) -> AlertItem:
+            # Check for existing unacknowledged alert for this shelf
+            existing_stmt = select(AlertModel).where(
+                AlertModel.shelf_id == shelf_id,
+                AlertModel.acknowledged.is_(False),
+                AlertModel.alert_type == alert_type,
+            )
+            existing_res = await s.execute(existing_stmt)
+            existing_record = existing_res.scalars().first()
+            if existing_record:
+                # Update existing incident telemetry rather than duplicating
+                existing_record.shelf_occupancy = occupancy_pct
+                existing_record.detected_products = detected_products
+                existing_record.description = desc
+                if annotated_image_url:
+                    existing_record.annotated_image_url = annotated_image_url
+                existing_record.notes = notes_json
+                return self._orm_to_schema(existing_record)
+
+            # Insert new alert
+            stmt = (
+                pg_insert(AlertModel)
+                .values(
+                    id=alert_id,
+                    idempotency_key=idem_key,
+                    shelf_id=shelf_id,
+                    shelf_occupancy=occupancy_pct,
+                    detected_products=detected_products,
+                    annotated_image_url=annotated_image_url,
+                    alert_type=alert_type,
+                    area=location,
+                    severity=severity,
+                    description=desc,
+                    acknowledged=False,
+                    time_str=now_str,
+                    created_at=now_utc,
+                    notes=notes_json,
+                )
+                .on_conflict_do_nothing(index_elements=["idempotency_key"])
+            )
+            await s.execute(stmt)
+
+            query = select(AlertModel).where(AlertModel.idempotency_key == idem_key)
+            rec = (await s.execute(query)).scalar_one_or_none()
+            if rec:
+                return self._orm_to_schema(rec)
+
+            return AlertItem(
+                id=alert_id,
+                type=alert_type,
+                time=now_str,
+                area=location,
+                severity=severity,  # type: ignore[arg-type]
+                description=desc,
+                acknowledged=False,
+                shelfId=shelf_id,
+                shelfOccupancy=occupancy_pct,
+                detectedProducts=detected_products,
+                annotatedImageUrl=annotated_image_url,
+                notes=notes_json,
+            )
+
+        if session is not None:
+            res = await _persist_shelf_alert(session)
+            await session.commit()
+            return res
+
+        session_factory = get_session_factory()
+        async with session_factory() as s:
+            async with s.begin():
+                return await _persist_shelf_alert(s)
+
+    def evaluate_shelf_telemetry_sync(
+        self,
+        shelf_data: Dict[str, Any],
+    ) -> Optional[AlertItem]:
+        """Synchronous wrapper for evaluate_shelf_telemetry."""
+        return _run_async(self.evaluate_shelf_telemetry(shelf_data))
 
     async def list_alerts(
         self,
@@ -336,7 +549,7 @@ class RuleEngine:
         session: Optional[AsyncSession] = None,
     ) -> Optional[AlertItem]:
         """Update an alert's status (acknowledgment / notes) in PostgreSQL."""
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_utc = utc_now()
         values: Dict[str, Any] = {
             "acknowledged": update_data.acknowledged,
             "acknowledged_at": now_utc if update_data.acknowledged else None,

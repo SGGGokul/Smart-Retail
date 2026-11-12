@@ -53,6 +53,21 @@ class Alert(Base):
         nullable=False,
         index=True,
     )
+    shelf_id: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+    shelf_occupancy: Mapped[Optional[float]] = mapped_column(
+        nullable=True,
+    )
+    detected_products: Mapped[Optional[int]] = mapped_column(
+        nullable=True,
+    )
+    annotated_image_url: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
     alert_type: Mapped[str] = mapped_column(
         String(100),
         nullable=False,

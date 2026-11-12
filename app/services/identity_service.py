@@ -97,7 +97,7 @@ class IdentityService:
 
     def __init__(
         self,
-        default_timezone: str = "UTC",
+        default_timezone: str = "Asia/Kolkata",
         reid_similarity_threshold: float = 0.85,
         ambiguity_margin: float = 0.10,
     ) -> None:
@@ -133,7 +133,7 @@ class IdentityService:
         try:
             tz = zoneinfo.ZoneInfo(target_tz_str)
         except Exception:
-            tz = zoneinfo.ZoneInfo("UTC")
+            tz = zoneinfo.ZoneInfo("Asia/Kolkata")
 
         if timestamp is not None and timestamp > 1000000000:
             dt = datetime.datetime.fromtimestamp(timestamp, tz=tz)

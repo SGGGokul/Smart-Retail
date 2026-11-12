@@ -8,6 +8,13 @@ import uuid
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.datetime_utils import (
+    ensure_utc,
+    store_day_bounds_utc,
+    to_store_tz,
+    to_utc_iso,
+    utc_now,
+)
 from app.db.session import get_session_factory
 from app.models.alert import Alert as AlertModel
 from app.models.analytics import AnalyticsRecord as AnalyticsRecordModel
@@ -57,8 +64,7 @@ class AnalyticsService:
     ) -> AnalyticsSummaryResponse:
         """Returns aggregate KPI metrics for the store overview dashboard."""
         async def _query(s: AsyncSession) -> AnalyticsSummaryResponse:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            today_start = datetime.datetime.combine(now.date(), datetime.time.min, tzinfo=datetime.timezone.utc)
+            today_start, _ = store_day_bounds_utc()
 
             # 1. Total customers and clips for today from completed VideoJob records
             stmt_today = (
@@ -143,8 +149,7 @@ class AnalyticsService:
     ) -> AnalyticsTrafficResponse:
         """Retrieves daily and hourly customer traffic counts from persisted PostgreSQL video jobs."""
         async def _query(s: AsyncSession) -> AnalyticsTrafficResponse:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            today_start = datetime.datetime.combine(now.date(), datetime.time.min, tzinfo=datetime.timezone.utc)
+            today_start, _ = store_day_bounds_utc()
 
             range_clean = (range_param or "7d").lower().strip()
             if range_clean == "today":
@@ -182,18 +187,19 @@ class AnalyticsService:
 
             for r in rows:
                 dt: datetime.datetime = r.job_time
-                if dt is None:
+                local_dt = to_store_tz(dt)
+                if local_dt is None:
                     continue
                 cust: int = r.customers_detected or 0
                 total_customers += cust
 
-                d = dt.date()
-                day_name = dt.strftime("%a")
+                d = local_dt.date()
+                day_name = local_dt.strftime("%a")
                 if d not in daily_map:
                     daily_map[d] = (day_name, 0)
                 daily_map[d] = (day_name, daily_map[d][1] + cust)
 
-                h_str = dt.strftime("%H")
+                h_str = local_dt.strftime("%H")
                 hourly_map[h_str] = hourly_map.get(h_str, 0) + cust
 
             daily = [TrafficPoint(day=name, customers=c) for name, c in daily_map.values()]
@@ -276,7 +282,7 @@ class AnalyticsService:
 
         Queue detection is not implemented in Stage 2. Returning contract-valid empty response.
         """
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        now_iso = to_utc_iso(utc_now()) or ""
         return AnalyticsQueuesResponse(
             queues=[],
             updatedAt=now_iso,
@@ -298,7 +304,7 @@ class AnalyticsService:
             if not job:
                 return None
 
-            job_time = job.processed_at or job.uploaded_at or datetime.datetime.now(datetime.timezone.utc)
+            job_time = ensure_utc(job.processed_at or job.uploaded_at) or utc_now()
             record_date = job_time.date()
             record_hour = job_time.hour
             store_id = job.store_id

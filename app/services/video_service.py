@@ -13,6 +13,12 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.datetime_utils import (
+    ensure_utc,
+    format_store_uploaded_label,
+    to_utc_iso,
+    utc_now,
+)
 from app.db.session import get_session_factory
 from app.models.customer_journey import CustomerVisitModel, CustomerZoneEventModel
 from app.models.video import (
@@ -65,20 +71,15 @@ class VideoService:
 
     @staticmethod
     def _orm_to_schema(job_orm: VideoJobModel) -> VideoJobSchema:
-        uploaded_str = (
-            job_orm.uploaded_at.strftime("Today %H:%M")
-            if job_orm.uploaded_at
-            else datetime.datetime.now().strftime("Today %H:%M")
-        )
-        processed_str = (
-            job_orm.processed_at.isoformat()
-            if job_orm.processed_at
-            else None
-        )
+        uploaded_utc = ensure_utc(job_orm.uploaded_at) or utc_now()
+        uploaded_str = format_store_uploaded_label(uploaded_utc)
+        uploaded_iso = to_utc_iso(uploaded_utc)
+        processed_str = to_utc_iso(job_orm.processed_at)
         return VideoJobSchema(
             id=job_orm.id,
             file=job_orm.filename,
             uploaded=uploaded_str,
+            uploadedAt=uploaded_iso,
             status=job_orm.status,  # type: ignore[arg-type]
             frames=job_orm.frames,
             customersDetected=job_orm.customers_detected,
@@ -141,6 +142,7 @@ class VideoService:
             status="queued",
             frames=0,
             customers_detected=0,
+            uploaded_at=utc_now(),
         )
 
         if session is not None:
@@ -186,7 +188,7 @@ class VideoService:
         avg_dwell_s = cv_results["average_dwell_seconds"]
         detections = cv_results.get("detections", [])
         tracking_data = cv_results.get("tracking_summaries", [])
-        processed_at = datetime.datetime.now(datetime.timezone.utc)
+        processed_at = utc_now()
 
         sample_dets = [
             d.model_dump() if hasattr(d, "model_dump") else d

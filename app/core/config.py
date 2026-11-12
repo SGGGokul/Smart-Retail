@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "RetailIQ Backend"
     VERSION: str = "1.0.0"
     DEBUG: bool = False
+    STORE_TIMEZONE: str = "Asia/Kolkata"
 
     # Server binding
     HOST: str = "127.0.0.1"
@@ -58,6 +59,9 @@ class Settings(BaseSettings):
     ALERT_OCCUPANCY_CRITICAL_THRESHOLD: int = 25
     ALERT_DWELL_SECONDS_THRESHOLD: float = 120.0
     ALERT_ENTRY_SURGE_THRESHOLD: int = 20
+    ALERT_SHELF_WARNING_THRESHOLD: float = 60.0
+    ALERT_SHELF_CRITICAL_THRESHOLD: float = 30.0
+    ALERT_SHELF_EMPTY_THRESHOLD: float = 5.0
 
     # Groq LLM & Guardrail Configuration
     GROQ_API_KEY: Optional[str] = None

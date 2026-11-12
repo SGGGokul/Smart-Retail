@@ -1,12 +1,27 @@
-from typing import Optional
+import datetime
+from typing import Optional, Tuple
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
+from app.core.datetime_utils import format_store_time_hm, to_utc_iso
 from app.schemas.image import ImageDetectionResponse
 from app.schemas.shelves import ShelfItem, ShelfMetricsResponse, ShelvesResponse
 from app.services.image_service import get_image_detection_service
 from app.services.shelf_service import get_shelf_service
 
 router = APIRouter()
+
+
+def _format_shelf_timestamps(last_updated_timestamp: float) -> Tuple[str, Optional[str]]:
+    """Format shelf observation timestamps using store timezone and UTC ISO-8601."""
+    if last_updated_timestamp > 1_000_000_000:
+        ts_utc = datetime.datetime.fromtimestamp(
+            last_updated_timestamp,
+            tz=datetime.timezone.utc,
+        )
+        return format_store_time_hm(ts_utc), to_utc_iso(ts_utc)
+    if last_updated_timestamp > 0:
+        return "Just now", None
+    return "Pending stream", None
 
 
 @router.post(
@@ -51,22 +66,25 @@ async def list_shelves(
     service = get_shelf_service()
     shelf_states = service.list_shelves(store_id=store_id, status_filter=status)
 
-    items = [
-        ShelfItem(
-            id=s.bay.shelf_id,
-            name=s.bay.name,
-            aisle=s.bay.aisle,
-            fillPct=s.fill_percentage,
-            status=s.status,  # type: ignore[arg-type]
-            lastChecked="Just now" if s.last_updated_timestamp > 0 else "Pending stream",
-            capacity=s.bay.configured_capacity,
-            occupancy=s.current_occupancy,
-            emptyPositions=s.empty_positions,
-            tierCount=s.bay.tier_count,
-            productClasses=s.bay.product_classes,
+    items = []
+    for s in shelf_states:
+        last_checked, last_checked_at = _format_shelf_timestamps(s.last_updated_timestamp)
+        items.append(
+            ShelfItem(
+                id=s.bay.shelf_id,
+                name=s.bay.name,
+                aisle=s.bay.aisle,
+                fillPct=s.fill_percentage,
+                status=s.status,  # type: ignore[arg-type]
+                lastChecked=last_checked,
+                lastCheckedAt=last_checked_at,
+                capacity=s.bay.configured_capacity,
+                occupancy=s.current_occupancy,
+                emptyPositions=s.empty_positions,
+                tierCount=s.bay.tier_count,
+                productClasses=s.bay.product_classes,
+            )
         )
-        for s in shelf_states
-    ]
 
     critical_count = sum(1 for item in items if item.status == "critical")
     low_count = sum(1 for item in items if item.status == "low")
@@ -97,13 +115,16 @@ async def get_shelf(
             detail=f"Shelf zone '{id}' not found.",
         )
 
+    last_checked, last_checked_at = _format_shelf_timestamps(state.last_updated_timestamp)
+
     return ShelfItem(
         id=state.bay.shelf_id,
         name=state.bay.name,
         aisle=state.bay.aisle,
         fillPct=state.fill_percentage,
         status=state.status,  # type: ignore[arg-type]
-        lastChecked="Just now" if state.last_updated_timestamp > 0 else "Pending stream",
+        lastChecked=last_checked,
+        lastCheckedAt=last_checked_at,
         capacity=state.bay.configured_capacity,
         occupancy=state.current_occupancy,
         emptyPositions=state.empty_positions,
